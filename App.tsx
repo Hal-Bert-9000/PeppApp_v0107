@@ -43,6 +43,7 @@ const App: React.FC = () => {
 
   const [timeLeft, setTimeLeft] = useState(USER_TURN_TIME);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [lastWinnerId, setLastWinnerId] = useState<number | null>(null);
   
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -136,7 +137,25 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (gameState.currentTrick.length === 4) { // <-- QUANDO CI SONO 4 CARTE SUL TAVOLO
+      
+      // Calcolo preventivo del vincitore per l'effetto UI
+      const trick = gameState.currentTrick;
+      const leadSuitUsed = gameState.leadSuit!;
+      let winnerId = trick[0].playerId;
+      let maxVal = -1;
+      trick.forEach(t => {
+        if (t.card.suit === leadSuitUsed && t.card.value > maxVal) {
+          maxVal = t.card.value;
+          winnerId = t.playerId;
+        }
+      });
+
       const timer = setTimeout(() => {         // <-- ATTESA in ms inserita nelle const in alto
+        
+        // Attiva l'effetto grafico per 5.5 secondi
+        setLastWinnerId(winnerId);
+        setTimeout(() => setLastWinnerId(null), 5500);
+
         setGameState(prev => {                 // ... calcolo del vincitore, assegnazione punti e pulizia del tavolo ...
           const trick = prev.currentTrick;
           const leadSuitUsed = prev.leadSuit!;
@@ -257,8 +276,15 @@ const App: React.FC = () => {
     return pts;
   }, [gameState.currentTrick]);
   {/* --------------- COMPOSIZIONE UI_SMALL ------------------*/}
-  const PlayerInfoWidget = ({ player, isBot, isCurrent }: { player: Player, isBot: boolean, isCurrent: boolean }) => (
-    <div className={`flex flex-row items-center gap-2 bg-black/65 px-2 py-2 rounded-xl border ${isCurrent ? 'border-yellow-400 scale-105 shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'border-white/10'} shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
+  const PlayerInfoWidget = ({ player, isBot, isCurrent, isLastWinner }: { player: Player, isBot: boolean, isCurrent: boolean, isLastWinner: boolean }) => (
+    <div className={`flex flex-row items-center gap-2 bg-black/65 px-2 py-2 rounded-xl border 
+      ${isLastWinner 
+          ? 'border-b-4 border-b-sky-400 shadow-[0_15px_20px_rgba(44,153,255,0.85)] border-t-white/10 border-x-white/10' // shadow-[0_0_25px_5px_rgba(44,153,255,10.85)]
+          : (isCurrent 
+              ? 'border-yellow-400 scale-105 shadow-[0_0_15px_rgba(250,204,21,0.3)]' 
+              : 'border-white/10')
+      } 
+      shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
       <div className="flex flex-col min-w-[70px]">
         <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-0.5">{isBot ? 'Bot' : 'Giocatore'}</span>
         <span className="font-bold text-sm tracking-tight truncate">{player.name}</span>
@@ -271,7 +297,7 @@ const App: React.FC = () => {
       <div className="w-[1px] h-6 bg-white/10" />
       <div className="flex flex-col items-center w-[40px]">
         <span className="text-[9px] font-bold opacity-40 uppercase">Prese</span>
-        <span className="font-bold text-base text-emerald-400">{player.tricksWon}</span>
+        <span className="font-bold text-base text-cyan-400">{player.tricksWon}</span>
       </div>
       <div className="w-[1px] h-6 bg-white/10" />
       <div className="flex flex-col items-center w-[40px]">
@@ -309,23 +335,23 @@ const App: React.FC = () => {
       <div className="relative w-full h-full flex items-center justify-center z-10 pointer-events-none">
         {/* --------------- Bot Widgets ----------------- UI_small ?? ----------- */}
         <div className="absolute top-[3vh] left-1/2 -translate-x-1/2 z-20">
-          <PlayerInfoWidget player={gameState.players[2]} isBot={true} isCurrent={gameState.turnIndex === 2 && gameState.gameStatus === 'playing'} />
+          <PlayerInfoWidget player={gameState.players[2]} isBot={true} isCurrent={gameState.turnIndex === 2 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 2} />
         </div>
         <div className="absolute left-[1vw] top-[70vh] z-20">
-          <PlayerInfoWidget player={gameState.players[1]} isBot={true} isCurrent={gameState.turnIndex === 1 && gameState.gameStatus === 'playing'} />
+          <PlayerInfoWidget player={gameState.players[1]} isBot={true} isCurrent={gameState.turnIndex === 1 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 1} />
         </div>
         <div className="absolute right-[1vw] top-[70vh] z-20">
-          <PlayerInfoWidget player={gameState.players[3]} isBot={true} isCurrent={gameState.turnIndex === 3 && gameState.gameStatus === 'playing'} />
+          <PlayerInfoWidget player={gameState.players[3]} isBot={true} isCurrent={gameState.turnIndex === 3 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 3} />
         </div>
         
-        {/* -------- POSIZIONE VALORE MANO (FLUTTUANTE AL CENTRO) -------- */}
+        {/* -------- POSIZIONE VALORE MANO (FLUTTUANTE AL CENTRO) 
         {gameState.currentTrick.length > 0 && (
           <div className="absolute top-[35%] left-[50%] -translate-x-1/2 -translate-y-1/2 z-[300]">
              <div className={`animate-pulse slow text-5xl font-extrabold drop-shadow-[0_0_16px_rgba(255,255,255,0.8)] ${currentTrickValue >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {currentTrickValue > 0 ? `+${currentTrickValue}` : currentTrickValue}
              </div>
           </div>
-        )}    
+        )}    -------- */}
 
         {/* --------------- POSIZIONE CARTE SUL TAVOLO ------------------*/}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none shadow-none">
@@ -349,7 +375,14 @@ const App: React.FC = () => {
 
       {/* --------------------- USER DASHBOARD WIDGET (SUD) ---------------------- */}
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[350] pointer-events-none">
-        <div className={`flex flex-row items-center justify-between gap-2 bg-black/65 px-2 py-2 rounded-xl border ${gameState.turnIndex === 0 && gameState.gameStatus === 'playing' ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'border-white/10'} shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
+        <div className={`flex flex-row items-center justify-between gap-2 bg-black/65 px-2 py-2 rounded-xl border 
+            ${lastWinnerId === 0 
+                ? 'border-t-4 border-t-sky-400 shadow-[0_-15px_20px_rgba(44,153,255,0.85)] border-b-white/10 border-x-white/10' // originale: shadow-[0_0_25px_rgba(34,211,238,0.5)]
+                : (gameState.turnIndex === 0 && gameState.gameStatus === 'playing' 
+                    ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.3)]' 
+                    : 'border-white/10')
+            } 
+            shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
             
             {/* 1. Mano */}
             <div className="flex flex-col items-center w-[40px]">
@@ -391,7 +424,7 @@ const App: React.FC = () => {
             {/* 6. Prese */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Prese</span>
-                <span className="font-bold text-base text-emerald-400">{gameState.players[0].tricksWon}</span>
+                <span className="font-bold text-base text-sky-400">{gameState.players[0].tricksWon}</span>
             </div>
              <div className="w-[1px] h-8 bg-white/10" />
 

@@ -1,13 +1,15 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { GameState, Card, Player, PassDirection } from './types';
+import { GameState, Card, Player, PassDirection, GameConfig } from './types';
 import { createDeck, shuffle } from './constants';
-import { getAiPass, getAiMove } from './services/geminiAi';
+import { getGemPass, getGemMove } from './services/gem_Ai';
+import { getHalBPassthroughCards, getHalBMove } from './services/hal_bAi';
 import PlayingCard from './components/PlayingCard';
+import TimeBar from './components/TimeBar';
 
-const TOTAL_ROUNDS = 4;
 const USER_TURN_TIME = 40;
-const BOT_MAX_TIME = 5;
+// Impostato a 20s totali: 1s ritardo iniziale + 20s timeout API + 4s margine visivo
+const BOT_MAX_TIME = 20; 
 const ATTESA = 2000; // ms
 
 const AI_NAMES = [
@@ -16,36 +18,58 @@ const AI_NAMES = [
   "Robbie", "SAM 104", "T‑800", "Roy Batty"
 ];
 
+const DEFAULT_CONFIG: GameConfig = {
+  playerName: 'Charlie Bartom',
+  useGem: false, // DEFAULT: Hal_B (Offline)
+  maxRounds: 8,
+  maxScore: 100,
+  passSequenceName: 'DSC-'
+};
+
 const App: React.FC = () => {
   const botNames = useMemo(() => shuffle([...AI_NAMES]).slice(0, 3), []);
-  // Mazziere iniziale casuale (Regola n.6)
+  // Mazziere iniziale casuale
   const [dealerOffset] = useState(() => Math.floor(Math.random() * 4));
 
-  const initialPlayers: Player[] = useMemo(() => [
-    { id: 0, name: 'Charlie Bartom', hand: [], isHuman: true, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
-    { id: 1, name: botNames[0], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
-    { id: 2, name: botNames[1], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
-    { id: 3, name: botNames[2], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
-  ], [botNames]);
-
   const [gameState, setGameState] = useState<GameState>({
-    players: initialPlayers,
+    players: [], // Inizializzati nel setup
     currentTrick: [],
     turnIndex: 0,
     leadSuit: null,
     heartsBroken: false,
     roundNumber: 1,
-    passDirection: 'right', // Inizia con Destra (Nuova Regola n.4)
-    gameStatus: 'dealing',
+    passDirection: 'right',
+    gameStatus: 'setup',
     winningMessage: null,
-    receivedCards: []
+    receivedCards: [],
+    config: DEFAULT_CONFIG
   });
 
   const [timeLeft, setTimeLeft] = useState(USER_TURN_TIME);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastWinnerId, setLastWinnerId] = useState<number | null>(null);
   
+  // Stato temporaneo per il form di setup
+  const [tempConfig, setTempConfig] = useState<GameConfig>(DEFAULT_CONFIG);
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Inizializza i giocatori quando inizia il gioco vero e proprio
+  const initializeGame = () => {
+    const initialPlayers: Player[] = [
+      { id: 0, name: tempConfig.playerName || 'Giocatore', hand: [], isHuman: true, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
+      { id: 1, name: botNames[0], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
+      { id: 2, name: botNames[1], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
+      { id: 3, name: botNames[2], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
+    ];
+
+    setGameState(prev => ({
+      ...prev,
+      players: initialPlayers,
+      config: tempConfig,
+      gameStatus: 'dealing'
+    }));
+  };
 
   // Calcolo dinamico del Mazziere e del Primo di Mano
   const dealerIndex = (gameState.roundNumber - 1 + dealerOffset) % 4;
@@ -53,6 +77,7 @@ const App: React.FC = () => {
   const startingPlayerIndex = (gameState.roundNumber + dealerOffset) % 4;
 
   const getRank = (playerId: number) => {
+    if (gameState.players.length === 0) return 1;
     const isScoring = gameState.gameStatus === 'scoring' || gameState.gameStatus === 'gameOver';
     const scores = gameState.players.map(p => p.score + (isScoring ? p.pointsThisRound : 0));
     const sortedScores = [...new Set(scores)].sort((a, b) => b - a);
@@ -60,15 +85,6 @@ const App: React.FC = () => {
     const scoreToCompare = player.score + (isScoring ? player.pointsThisRound : 0);
     return sortedScores.indexOf(scoreToCompare) + 1;
   };
-
-  const getHeuristicMove = useCallback((hand: Card[], leadSuit: Card['suit'] | null, heartsBroken: boolean): Card => {
-    let playable = hand;
-    if (leadSuit) {
-      const sameSuit = hand.filter(c => c.suit === leadSuit);
-      if (sameSuit.length > 0) playable = sameSuit;
-    }
-    return [...playable].sort((a,b) => a.value - b.value)[0];
-  }, []);
 
   const playCard = useCallback((playerId: number, card: Card) => {
     setGameState(prev => {
@@ -89,24 +105,47 @@ const App: React.FC = () => {
     });
   }, []);
 
+  // --- GESTIONE MOSSE BOT (PASSAGGIO) ---
   useEffect(() => {
     if (gameState.gameStatus === 'passing') {
-      if (gameState.passDirection === 'none') return; // Nessun passaggio automatico per i bot se 'none'
+      if (gameState.passDirection === 'none') return;
       
       const botsWithoutPass = gameState.players.filter(p => !p.isHuman && p.selectedToPass.length === 0);
-      botsWithoutPass.forEach(async (bot) => {
-        const fallbackIds = [...bot.hand].sort((a, b) => b.value - a.value).slice(0, 3).map(c => c.id);
-        setGameState(prev => ({
-          ...prev,
-          players: prev.players.map(p => p.id === bot.id ? { ...p, selectedToPass: fallbackIds } : p)
-        }));
-      });
-    }
-  }, [gameState.gameStatus, gameState.passDirection]);
+      
+      const processBots = async () => {
+        for (const bot of botsWithoutPass) {
+            let ids: string[] | null = null;
+            
+            // Ritardo simulato per il passaggio
+            await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
 
+            if (gameState.config.useGem) {
+               // GEM (Offline Advanced)
+               ids = getGemPass(bot.hand);
+            } else {
+               // Hal B (Standard)
+               console.log(`%c[Hal B] Bot ${bot.name} calcola passaggio`, "color: orange; font-weight: bold;");
+               ids = getHalBPassthroughCards(bot.hand);
+            }
+
+            setGameState(prev => ({
+                ...prev,
+                players: prev.players.map(p => p.id === bot.id ? { ...p, selectedToPass: ids! } : p)
+            }));
+        }
+      };
+
+      if (botsWithoutPass.length > 0) {
+          processBots();
+      }
+    }
+  }, [gameState.gameStatus, gameState.passDirection, gameState.players, gameState.config.useGem]);
+
+  // --- TIMER ---
   useEffect(() => {
     if (gameState.gameStatus === 'playing' && gameState.currentTrick.length < 4) {
       const currentPlayer = gameState.players[gameState.turnIndex];
+      if (!currentPlayer) return;
       setTimeLeft(currentPlayer.isHuman ? USER_TURN_TIME : BOT_MAX_TIME);
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(() => setTimeLeft(prev => prev > 0 ? prev - 1 : 0), 1000);
@@ -114,31 +153,58 @@ const App: React.FC = () => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length]);
 
+  // --- AUTO-PLAY SE SCADE TEMPO ---
   useEffect(() => {
     if (timeLeft === 0 && gameState.gameStatus === 'playing' && !isProcessing) {
       const currentPlayer = gameState.players[gameState.turnIndex];
-      if (currentPlayer.hand.length === 0) return;
-      const card = getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
+      if (!currentPlayer || currentPlayer.hand.length === 0) return;
+      
+      console.log(`%c[Timeout] Forcing move for ${currentPlayer.name}`, "color: red;");
+      const card = getHalBMove(gameState, currentPlayer.id); // Fallback safe
       if (card) playCard(gameState.turnIndex, card);
     }
   }, [timeLeft, gameState.gameStatus, isProcessing]);
 
+  // --- GESTIONE MOSSE BOT (PLAY) ---
   useEffect(() => {
+    if (gameState.players.length === 0) return;
     const currentPlayer = gameState.players[gameState.turnIndex];
+    
     if (gameState.gameStatus === 'playing' && !currentPlayer.isHuman && gameState.currentTrick.length < 4 && !isProcessing) {
       setIsProcessing(true);
-      setTimeout(() => {
-        const finalCard = getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
-        playCard(gameState.turnIndex, finalCard);
+      
+      const performBotMove = async () => {
+        let cardToPlay: Card | null = null;
+
+        // CALCOLO DEL RITARDO SIMULATO
+        const thinkingTime = Math.floor(Math.random() * 2000) + 1500;
+        await new Promise(r => setTimeout(r, thinkingTime));
+
+        try {
+            if (gameState.config.useGem) {
+                // GEM (Advanced Offline)
+                cardToPlay = getGemMove(gameState, currentPlayer.id);
+            } else {
+                // Hal B (Standard Offline)
+                console.log(`%c[Hal B] Bot ${currentPlayer.name} calcola mossa`, "color: orange;");
+                cardToPlay = getHalBMove(gameState, currentPlayer.id);
+            }
+        } catch (e) {
+            console.error("Errore AI:", e);
+            cardToPlay = currentPlayer.hand[0];
+        }
+
+        playCard(gameState.turnIndex, cardToPlay!);
         setIsProcessing(false);
-      }, 1000);
+      };
+
+      performBotMove();
     }
-  }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length]);
+  }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length, gameState.config.useGem]);
 
   useEffect(() => {
-    if (gameState.currentTrick.length === 4) { // <-- QUANDO CI SONO 4 CARTE SUL TAVOLO
+    if (gameState.currentTrick.length === 4) { 
       
-      // Calcolo preventivo del vincitore per l'effetto UI
       const trick = gameState.currentTrick;
       const leadSuitUsed = gameState.leadSuit!;
       let winnerId = trick[0].playerId;
@@ -150,13 +216,11 @@ const App: React.FC = () => {
         }
       });
 
-      const timer = setTimeout(() => {         // <-- ATTESA in ms inserita nelle const in alto
-        
-        // Attiva l'effetto grafico per 5.5 secondi
+      const timer = setTimeout(() => {         
         setLastWinnerId(winnerId);
         setTimeout(() => setLastWinnerId(null), 5500);
 
-        setGameState(prev => {                 // ... calcolo del vincitore, assegnazione punti e pulizia del tavolo ...
+        setGameState(prev => {                 
           const trick = prev.currentTrick;
           const leadSuitUsed = prev.leadSuit!;
           let winnerId = trick[0].playerId;
@@ -177,8 +241,7 @@ const App: React.FC = () => {
           const nextPlayers = prev.players.map(p => p.id === winnerId ? { ...p, pointsThisRound: p.pointsThisRound + trickPoints, tricksWon: p.tricksWon + 1 } : p);
           
           if (nextPlayers[0].hand.length === 0) {
-            // VERIFICA REGOLA CAPPOTTO
-            // Tutti i cuori (104) + Peppa (26) = 130 punti di penalità totale
+            // Fine Round
             const slamPlayer = nextPlayers.find(p => (p.tricksWon * 10 - p.pointsThisRound) === 130);
             let processedPlayers = nextPlayers;
             let slamMsg = null;
@@ -197,10 +260,14 @@ const App: React.FC = () => {
               tricksWon: 0 
             }));
 
+            // VERIFICA FINE PARTITA (Regole Configurate)
+            const maxRoundsReached = prev.roundNumber >= prev.config.maxRounds;
+            const scoreLimitHit = endRoundPlayers.some(p => Math.abs(p.score) >= prev.config.maxScore);
+
             return { 
               ...prev, 
               players: endRoundPlayers, 
-              gameStatus: prev.roundNumber >= TOTAL_ROUNDS ? 'gameOver' : 'scoring', 
+              gameStatus: (maxRoundsReached || scoreLimitHit) ? 'gameOver' : 'scoring', 
               currentTrick: [],
               winningMessage: slamMsg
             };
@@ -214,9 +281,18 @@ const App: React.FC = () => {
 
   const startNewRound = useCallback(() => {
     const deck = shuffle(createDeck());
-    // Regola n.4: Sequenza Destra, Sinistra, Fronte, No
-    const directions: PassDirection[] = ['right', 'left', 'across', 'none'];
-    const dir = directions[(gameState.roundNumber - 1) % 4];
+    const seqType = gameState.config.passSequenceName;
+    let dir: PassDirection = 'none';
+    const cycle = (gameState.roundNumber - 1) % 4;
+    
+    if (seqType === 'DSC-') {
+      const map: PassDirection[] = ['right', 'left', 'across', 'none'];
+      dir = map[cycle];
+    } else {
+      const map: PassDirection[] = ['right', 'left', 'none', 'across'];
+      dir = map[cycle];
+    }
+
     const hands = [deck.slice(0,13), deck.slice(13,26), deck.slice(26,39), deck.slice(39,52)];
     const newPlayers = gameState.players.map((p, i) => ({
       ...p, hand: hands[i].sort((a,b) => a.suit === b.suit ? a.value - b.value : a.suit.localeCompare(b.suit)),
@@ -224,11 +300,11 @@ const App: React.FC = () => {
     }));
     
     setGameState(prev => ({
-      ...prev, players: newPlayers, passDirection: dir, gameStatus: 'passing', // Sempre 'passing' per mostrare il popup
+      ...prev, players: newPlayers, passDirection: dir, gameStatus: 'passing', 
       currentTrick: [], turnIndex: startingPlayerIndex, heartsBroken: false, leadSuit: null, receivedCards: [],
       winningMessage: null
     }));
-  }, [gameState.roundNumber, gameState.players, startingPlayerIndex]);
+  }, [gameState.roundNumber, gameState.players, startingPlayerIndex, gameState.config.passSequenceName]);
 
   const toggleSelectToPass = (cardId: string) => {
     setGameState(prev => {
@@ -275,37 +351,46 @@ const App: React.FC = () => {
     }
     return pts;
   }, [gameState.currentTrick]);
-  {/* --------------- COMPOSIZIONE UI_SMALL ------------------*/}
+
+  // Helper UI
   const PlayerInfoWidget = ({ player, isBot, isCurrent, isLastWinner }: { player: Player, isBot: boolean, isCurrent: boolean, isLastWinner: boolean }) => (
-    <div className={`flex flex-row items-center gap-2 bg-black/65 px-2 py-2 rounded-xl border 
-      ${isLastWinner 
-          ? 'border-b-4 border-b-sky-400 shadow-[0_2px_2px_rgba(56,189,248,0.85)] border-t-white/10 border-x-white/10' 
-          : (isCurrent 
-              ? 'border-yellow-400 scale-105 shadow-[0_15px_15px_rgba(250,204,21,0.65)]' 
-              : 'border-white/10')
-      } 
-      shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
-      <div className="flex flex-col min-w-[70px]">
-        <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-0.5">{isBot ? 'Bot' : 'Giocatore'}</span>
-        <span className="font-bold text-sm tracking-tight truncate">{player.name}</span>
+    <div className="flex flex-col items-center gap-1">
+      <div className={`flex flex-row items-center gap-2 bg-black/65 px-3 py-2 rounded-xl border 
+        ${isCurrent 
+            ? 'border-white/40 scale-105' 
+            : 'border-white/10'
+        } 
+        shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
+        <div className="flex flex-col min-w-[70px]">
+          <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-0.5">{isBot ? 'Bot' : 'Giocatore'}</span>
+          <span className="font-bold text-sm tracking-tight truncate">{player.name}</span>
+        </div>
+        <div className="w-[1px] h-6 bg-white/10" />
+        <div className="flex flex-col items-center w-[40px]">
+          <span className="text-[9px] font-bold opacity-40 uppercase">Rank</span>
+          <span className="font-bold text-yellow-400 text-base">{getRank(player.id)}°</span>
+        </div>
+        <div className="w-[1px] h-6 bg-white/10" />
+        <div className="flex flex-col items-center w-[40px]">
+          <span className="text-[9px] font-bold opacity-40 uppercase">Prese</span>
+          <span className="font-bold text-base text-sky-400">{player.tricksWon}</span>
+        </div>
+        <div className="w-[1px] h-6 bg-white/10" />
+        <div className="flex flex-col items-center w-[40px]">
+          <span className="text-[9px] font-bold opacity-40 uppercase">Punti</span>
+          <span className={`font-bold text-base ${player.score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {player.score}
+          </span>
+        </div>
       </div>
-      <div className="w-[1px] h-6 bg-white/10" />
-      <div className="flex flex-col items-center w-[40px]">
-        <span className="text-[9px] font-bold opacity-40 uppercase">Rank</span>
-        <span className="font-bold text-yellow-400 text-base">{getRank(player.id)}°</span>
-      </div>
-      <div className="w-[1px] h-6 bg-white/10" />
-      <div className="flex flex-col items-center w-[40px]">
-        <span className="text-[9px] font-bold opacity-40 uppercase">Prese</span>
-        <span className="font-bold text-base text-sky-400">{player.tricksWon}</span>
-      </div>
-      <div className="w-[1px] h-6 bg-white/10" />
-      <div className="flex flex-col items-center w-[40px]">
-        <span className="text-[9px] font-bold opacity-40 uppercase">Punti</span>
-        <span className={`font-bold text-base ${player.score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-          {player.score}
-        </span>
-      </div>
+      
+      {((isCurrent && gameState.gameStatus === 'playing') || isLastWinner) && (
+        <TimeBar 
+            total={isLastWinner ? 1 : BOT_MAX_TIME} 
+            current={isLastWinner ? 0 : timeLeft} 
+            isWinner={isLastWinner} 
+        />
+      )}
     </div>
   );
 
@@ -329,22 +414,121 @@ const App: React.FC = () => {
     }
   };
 
+  // --- RENDER ---
+  
+  // 1. Schermata SETUP
+  if (gameState.gameStatus === 'setup') {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-black/45 backdrop-blur-sm text-white font-sans p-4">
+        <div className="bg-black/65 p-8 rounded-3xl border border-yellow-400/30 shadow-[0_0_50px_rgba(250,204,21,0.1)] max-w-lg w-full animate-deal">
+          <h1 className="text-4xl font-black text-emerald-400 mb-8 text-center tracking-tighter uppercase">SETUP</h1>
+          
+          <div className="mb-6">
+            <label className="block text-xs font-bold uppercase opacity-50 mb-2">Inserisci il tuo Nome</label>
+            <input 
+              type="text" 
+              value={tempConfig.playerName}
+              onChange={(e) => setTempConfig({...tempConfig, playerName: e.target.value})}
+              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 font-bold text-lg focus:outline-none focus:border-yellow-400 transition-colors"
+              placeholder="Inserisci nome..."
+            />
+          </div>
+
+          <div className="mb-6">
+            <label className="block text-xs font-bold uppercase opacity-50 mb-2">Intelligenza Artificiale</label>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setTempConfig({...tempConfig, useGem: true})}
+                className={`flex-1 py-3 rounded-xl font-bold border transition-all ${tempConfig.useGem ? 'bg-emerald-400 text-black border-emerald-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+              >
+                GEM (Advanced)
+              </button>
+              <button 
+                onClick={() => setTempConfig({...tempConfig, useGem: false})}
+                className={`flex-1 py-3 rounded-xl font-bold border transition-all ${!tempConfig.useGem ? 'bg-orange-400 text-black border-orange-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+              >
+                Halb AI (Std)
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <label className="block text-xs font-bold uppercase opacity-50 mb-2">Durata Partita (Mani)</label>
+            <div className="flex gap-2">
+              {[4, 8, 12].map(r => (
+                <button 
+                  key={r}
+                  onClick={() => setTempConfig({...tempConfig, maxRounds: r})}
+                  className={`flex-1 py-2 rounded-xl font-bold border transition-all ${tempConfig.maxRounds === r ? 'bg-white text-black border-white' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <label className="block text-xs font-bold uppercase opacity-50 mb-2">Limite Punteggio (Fine Gioco)</label>
+            <div className="flex gap-2">
+              {[50, 100].map(s => (
+                <button 
+                  key={s}
+                  onClick={() => setTempConfig({...tempConfig, maxScore: s})}
+                  className={`flex-1 py-2 rounded-xl font-bold border transition-all ${tempConfig.maxScore === s ? 'bg-white text-black border-white' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mb-8">
+            <label className="block text-xs font-bold uppercase opacity-50 mb-2">Sequenza Passaggio</label>
+            <div className="flex gap-2">
+               <button 
+                  onClick={() => setTempConfig({...tempConfig, passSequenceName: 'DSC-'})}
+                  className={`flex-1 py-2 rounded-xl font-bold border transition-all ${tempConfig.passSequenceName === 'DSC-' ? 'bg-yellow-400 text-black border-sky-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+                >
+                  D S C -
+                </button>
+                <button 
+                  onClick={() => setTempConfig({...tempConfig, passSequenceName: 'DS-C'})}
+                  className={`flex-1 py-2 rounded-xl font-bold border transition-all ${tempConfig.passSequenceName === 'DS-C' ? 'bg-yellow-400 text-black border-sky-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+                >
+                  D S - C
+                </button>
+            </div>
+          </div>
+
+          <button 
+            onClick={initializeGame}
+            className="w-full bg-emerald-400 hover:bg-white text-black font-black text-xl py-4 rounded-2xl shadow-xl transition-all active:scale-95"
+          >
+            INIZIA PARTITA
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Schermata GIOCO
   return (
     <div className="h-screen w-screen flex flex-col items-center justify-center overflow-hidden text-white font-sans select-none relative">
-       {/* ---------------  ------------------*/}
       <div className="relative w-full h-full flex items-center justify-center z-10 pointer-events-none">
-        {/* --------------- Bot Widgets ----------------- UI_small ?? ----------- */}
-        <div className="absolute top-[3vh] left-1/2 -translate-x-1/2 z-20">
-          <PlayerInfoWidget player={gameState.players[2]} isBot={true} isCurrent={gameState.turnIndex === 2 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 2} />
-        </div>
-        <div className="absolute left-[1vw] top-[70vh] z-20">
-          <PlayerInfoWidget player={gameState.players[1]} isBot={true} isCurrent={gameState.turnIndex === 1 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 1} />
-        </div>
-        <div className="absolute right-[1vw] top-[70vh] z-20">
-          <PlayerInfoWidget player={gameState.players[3]} isBot={true} isCurrent={gameState.turnIndex === 3 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 3} />
-        </div
+        {gameState.players.length > 0 && (
+          <>
+            <div className="absolute top-[3vh] left-1/2 -translate-x-1/2 z-20">
+              <PlayerInfoWidget player={gameState.players[2]} isBot={true} isCurrent={gameState.turnIndex === 2 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 2} />
+            </div>
+            <div className="absolute left-[1vw] top-[70vh] z-20">
+              <PlayerInfoWidget player={gameState.players[1]} isBot={true} isCurrent={gameState.turnIndex === 1 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 1} />
+            </div>
+            <div className="absolute right-[1vw] top-[70vh] z-20">
+              <PlayerInfoWidget player={gameState.players[3]} isBot={true} isCurrent={gameState.turnIndex === 3 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 3} />
+            </div>
+          </>
+        )}
 
-        {/* --------------- POSIZIONE CARTE SUL TAVOLO ------------------*/}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none shadow-none">
           {gameState.currentTrick.map((t) => {
             let positionClasses = "";
@@ -364,32 +548,37 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* --------------------- USER DASHBOARD WIDGET (SUD) ---------------------- */}
+      {gameState.players.length > 0 && (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[350] pointer-events-none">
+        
+        {((gameState.turnIndex === 0 && gameState.gameStatus === 'playing') || lastWinnerId === 0) && (
+          <div className="absolute -top-[2px] left-1/2 -translate-x-1/2 z-[360]">
+            <TimeBar 
+                total={lastWinnerId === 0 ? 1 : USER_TURN_TIME} 
+                current={lastWinnerId === 0 ? 0 : timeLeft} 
+                isWinner={lastWinnerId === 0}
+            />
+          </div>
+        )}
+
         <div className={`flex flex-row items-center justify-between gap-2 bg-black/65 px-2 py-2 rounded-xl border 
-            ${lastWinnerId === 0 
-                ? 'border-t-4 border-t-sky-400 shadow-[0_-15px_20px_rgba(56,189,248,0.85)] border-b-white/10 border-x-white/10'
-                : (gameState.turnIndex === 0 && gameState.gameStatus === 'playing' 
-                    ? 'border-yellow-400 shadow-[0_-15_15px_rgba(250,204,21,0.65)]' 
-                    : 'border-white/10')
-            } 
+            ${(gameState.turnIndex === 0 && gameState.gameStatus === 'playing')
+                ? 'border-white/40 shadow-lg' 
+                : 'border-white/10'} 
             shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
             
-            {/* 1. Mano */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Mano</span>
-                <span className="font-bold text-base text-white tracking-[-1.5]">{gameState.roundNumber} / {TOTAL_ROUNDS}</span>
+                <span className="font-bold text-base text-white tracking-[-1.5]">{gameState.roundNumber} / {gameState.config.maxRounds}</span>
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 2. Round */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Round</span>
                 <span className="font-bold text-base text-yellow-400 uppercase">{getTranslatedDirection(gameState.passDirection)}</span>
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 3. TRK.PT (NEW) */}
              <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">TRK.PT</span>
                 <span className={`font-bold text-base ${gameState.currentTrick.length === 0 ? 'text-white/60' : (currentTrickValue >= 0 ? 'text-emerald-400' : 'text-red-400')}`}>
@@ -398,47 +587,35 @@ const App: React.FC = () => {
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 4. Giocatore */}
-            <div className="flex flex-col items-center w-[160px]">
+            <div className="flex flex-col items-center w-max-[170px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Giocatore</span>
                 <span className="font-bold text-xl text-white truncate w-full text-center">{gameState.players[0].name}</span>
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 5. Rank */}
              <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Rank</span>
                 <span className="font-bold text-yellow-400 text-base">{getRank(0)}°</span>
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 6. Prese */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Prese</span>
                 <span className="font-bold text-base text-sky-400">{gameState.players[0].tricksWon}</span>
             </div>
              <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 7. Punti */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Punti</span>
                 <span className={`font-bold text-base ${gameState.players[0].score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                     {gameState.players[0].score}
                 </span>
             </div>
-             <div className="w-[1px] h-8 bg-white/10" />
-
-            {/* 8. Time */}
-             <div className="flex flex-col items-center w-[40px]">
-                <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Time</span>
-                <span className={`font-bold text-base transition-all duration-300 ${timeLeft < 10 && gameState.gameStatus === 'playing' ? 'text-red-500 animate-pulse' : 'text-white/60'}`}>
-                    {gameState.gameStatus === 'playing' ? `${timeLeft}s` : '--'}
-                </span>
-            </div>
         </div>
       </div>
+      )}
 
-      {/* -------------------  DISPOSIZIONE CARTE USER A VENTAGLIO ----------------------*/}
+      {gameState.players.length > 0 && (
       <div className="fixed bottom-[-15px] w-full flex justify-center z-[250] px-6">
         <div className="flex justify-center -space-x-[5rem] md:-space-x-[6rem] transition-all duration-500">
           {gameState.players[0].hand.map((card, i) => {
@@ -463,7 +640,7 @@ const App: React.FC = () => {
                 }}
               >
                 <div 
-                    className={`transition-all duration-200 ${isSelected ? '-translate-y-8 scale-110 z-10' : 'hover:-translate-y-12 hover:scale-110 hover:z-10'}`}
+                    className={`transition-all duration-200 ${isSelected ? '-translate-y-6 scale-110 z-10' : 'hover:-translate-y-12 hover:scale-110 hover:z-10'}`}
                 >
                     <div className="scale-110 md:scale-120">
                       <PlayingCard 
@@ -482,8 +659,9 @@ const App: React.FC = () => {
           })}
         </div>
       </div>
-      {/* ------------------  PASSA 3 CARTE ---------------------*/}
-      {gameState.gameStatus === 'passing' && (
+      )}
+      
+      {gameState.gameStatus === 'passing' && gameState.players.length > 0 && (
         <div className="fixed inset-0 z-[400] flex items-center justify-center pointer-events-none">
           <div className="bg-black/95 p-6 rounded-2xl border border-yellow-400/50 text-center shadow-[0_0_100px_rgba(0,0,0,0.8)] animate-deal pointer-events-auto max-w-md transform -translate-y-40">
             <h2 className="text-xl font-extrabold mb-1 text-yellow-400 uppercase tracking-tighter leading-none">{getPassDirectionDescription(gameState.passDirection)}</h2>
@@ -506,7 +684,6 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-      {/* ------------------  RICEVI 3 CARTE ---------------------*/}
       {gameState.gameStatus === 'receiving' && (
         <div className="fixed inset-0 bg-black/65 z-[500] flex items-center justify-center">
            <div className="bg-black/60 p-10 rounded-3xl border border-white/10 text-center animate-deal shadow-2xl backdrop-blur-xl transform -translate-y-24">
@@ -517,7 +694,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* -------------------  POPUP PUNTEGGI ----------------------*/}
       {gameState.gameStatus === 'scoring' && (
         <div className="fixed inset-0 bg-black/98 z-[600] flex items-center justify-center">
           <div className="w-full max-w-md bg-white/5 border border-white/10 p-8 rounded-3xl animate-deal transform -translate-y-12 backdrop-blur-xl">
@@ -549,8 +725,7 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-      {/* -------------------  DEALING ----------------------*/}
-      {gameState.gameStatus === 'dealing' && (
+      {gameState.gameStatus === 'dealing' && gameState.players.length > 0 && (
         <div className="fixed bottom-[10%] bg-black/98 z-[700] flex items-center justify-center">
           <div className="text-center animate-deal">
             <h1 className="text-[12rem] font-extrabold tracking-tighter text-yellow-400 leading-none">ROUND{gameState.roundNumber}</h1>
@@ -560,7 +735,6 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-      {/* -------------------  GAME OVER ----------------------*/}
       {gameState.gameStatus === 'gameOver' && (
         <div className="fixed inset-0 bg-black z-[1000] flex flex-col items-center justify-center p-6">
            <h1 className="text-6xl font-black text-yellow-400 mb-2 uppercase tracking-tighter">Fine Partita</h1>

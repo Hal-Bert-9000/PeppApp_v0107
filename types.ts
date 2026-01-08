@@ -22,6 +22,14 @@ export interface Player {
   selectedToPass: string[]; // IDs delle carte selezionate per lo scambio
 }
 
+export interface GameConfig {
+  playerName: string;
+  useGem: boolean; // Rinominato da useGemini a useGem
+  maxRounds: number;
+  maxScore: number; // 50 o 100
+  passSequenceName: 'DSC-' | 'DS-C'; // DSC- (Standard) o DS-C (Variante)
+}
+
 export interface GameState {
   players: Player[];
   currentTrick: { playerId: number; card: Card }[];
@@ -30,7 +38,8 @@ export interface GameState {
   heartsBroken: boolean;
   roundNumber: number;
   passDirection: PassDirection;
-  gameStatus: 'dealing' | 'passing' | 'receiving' | 'playing' | 'scoring' | 'gameOver';
+  gameStatus: 'setup' | 'dealing' | 'passing' | 'receiving' | 'playing' | 'scoring' | 'gameOver';
   winningMessage: string | null;
   receivedCards: Card[];
+  config: GameConfig;
 }

@@ -1,103 +1,119 @@
+
 // hal_bAi.ts
 
-import { Card, Suit, Rank } from '../types'; // Importiamo Card, Suit e Rank dal tuo types.ts
+import { Card, Rank, GameState } from '../types';
 
 /**
- * Decide quali 3 carte passare nel gioco "Peppa Scivolosa" per l'AI.
- * Implementa una logica di scoring e di valutazione per la strategia "Cappotto" o "Difensiva".
- *
- * @param hand Una lista di oggetti Card che rappresentano la mano dell'AI.
- * @returns Una lista di stringhe (ID delle carte) delle 3 carte da passare.
+ * Hal B - Improved Standard Logic
+ * Ora rispetta anche lui la regola d'oro: Non passare i cuori bassi.
  */
 export function getHalBPassthroughCards(hand: Card[]): string[] {
     if (hand.length <= 3) {
-        // Se abbiamo 3 o meno carte, passiamo tutte quelle che abbiamo
         return hand.map(card => card.id);
     }
 
-    // --- Step 1: Valutazione se la mano è adatta per un "Cappotto" ---
-    let qSpadeInHand: Card | undefined;
-    let heartCount = 0;
-    const highHeartsRanks: Rank[] = ['A', 'K', 'Q', 'J']; // Usiamo il tuo Rank type
-    let highHeartsInHandCount = 0;
-    let highNonHeartCardsCount = 0; // Assi, Re, Donne negli altri semi
-
-    for (const card of hand) {
-        if (card.suit === 'spades' && card.rank === 'Q') {
-            qSpadeInHand = card;
-        } else if (card.suit === 'hearts') {
-            heartCount++;
-            if (highHeartsRanks.includes(card.rank)) {
-                highHeartsInHandCount++;
-            }
-        } else if (['A', 'K', 'Q'].includes(card.rank)) {
-            // Non considerare la Q di Picche di nuovo, che è un caso speciale.
-            // Contiamo le carte alte (A, K, Q) degli altri semi (quadri, fiori, picche escluse Q)
-            if (!(card.suit === 'spades' && card.rank === 'Q')) {
-                highNonHeartCardsCount++;
-            }
-        }
-    }
-
-    // Criteri semplificati per un potenziale Cappotto (da testare e raffinare nel tuo gioco)
-    // Questa è una stima euristica. La complessità reale per un Cappotto effettivo sarebbe maggiore.
-    const isCappottoStrategy = qSpadeInHand !== undefined && heartCount >= 7 && highHeartsInHandCount >= 3 && highNonHeartCardsCount >= 2;
-
-
-    // --- Step 2: Assegnazione del Punteggio di "Indesiderabilità" / "Sacrificabilità" ---
-    const cardScores: { [cardId: string]: number } = {}; // Mappa ID carta a punteggio
+    const cardScores: { [cardId: string]: number } = {};
 
     for (const card of hand) {
         let score = 0;
 
-        if (isCappottoStrategy) {
-            // Strategia di Cappotto: vogliamo tenere le carte punti e le carte alte per fare prese
-            if (card.suit === 'spades' && card.rank === 'Q') {
-                score = -1000; // Massima priorità per TENERE la Peppa (punteggio negativo alto)
-            } else if (card.suit === 'hearts') {
-                score = -500; // Alta priorità per TENERE i Cuori
-                if (highHeartsRanks.includes(card.rank)) {
-                    score -= 100; // Ancora più priorità per i Cuori alti
-                }
-            } else if (['A', 'K', 'Q'].includes(card.rank)) {
-                // Priorità per TENERE carte alte per fare prese (non cuori, non Q di picche)
-                if (!(card.suit === 'spades' && card.rank === 'Q')) {
-                     score = -300;
-                }
-            } else {
-                // Carte basse e non pericolose negli altri semi sono sacrificabili
-                score = 10 + card.value; // Usiamo direttamente card.value ora!
-                                         // Più alto è il rank, più facilmente sacrificabile in questa strategia.
-            }
-        } else {
-            // Strategia Difensiva: vogliamo eliminare le carte pericolose
-            if (card.suit === 'spades' && card.rank === 'Q') {
-                score = 1000; // Massima priorità per PASSARE la Peppa (punteggio positivo alto)
-            } else if (card.suit === 'hearts') {
-                score = 500 + card.value; // Usiamo direttamente card.value ora!
-                                          // Più alto è il Cuore, più è prioritario da passare
-            } else {
-                // Valutazione per voiding (costruire un seme corto)
-                // Conta quante carte ci sono di quel seme nella mano
-                const sameSuitCards = hand.filter(c => c.suit === card.suit);
-                if (sameSuitCards.length <= 2 && !(['A', 'K', 'Q'].includes(card.rank))) { // Se il seme è corto e la carta non è alta
-                    score += 200 + card.value; // Usiamo direttamente card.value ora!
-                                                // Buona candidata per voiding, con carte basse preferite
-                }
-
-                // Carte basse e inutili in semi lunghi
-                if (['2', '3', '4', '5'].includes(card.rank) && sameSuitCards.length > 2) {
-                    score += 50;
-                }
-            }
+        // REGOLA FONDAMENTALE (anche per Hal B): Tieni i cuori bassi
+        if (card.suit === 'hearts' && ['2', '3', '4', '5'].includes(card.rank)) {
+            score = -500;
+        } 
+        // Q di Picche: Generalmente passala se non hai copertura, ma Hal B è prudente
+        else if (card.suit === 'spades' && card.rank === 'Q') {
+            score = 1000; // Priorità massima passaggio
         }
+        else if (card.suit === 'hearts') {
+            // Cuori alti via
+            score = 500 + card.value;
+        }
+        else if (['A', 'K'].includes(card.rank) && card.suit === 'spades') {
+            // A e K picche via se possibile
+            score = 400; 
+        } 
+        else {
+            // Carte alte generiche via
+            score = card.value * 10;
+            
+            // Voiding: favorisci carte singole
+            const sameSuitCount = hand.filter(c => c.suit === card.suit).length;
+            if (sameSuitCount <= 2) score += 50;
+        }
+        
         cardScores[card.id] = score;
     }
 
-    // --- Step 3: Selezione Finale ---
-    // Ordina le carte in base al loro punteggio di indesiderabilità/sacrificabilità in ordine decrescente
     const sortedCards = [...hand].sort((a, b) => cardScores[b.id] - cardScores[a.id]);
-
-    // Restituisce gli ID delle prime 3 carte
     return sortedCards.slice(0, 3).map(card => card.id);
+}
+
+export function getHalBMove(gameState: GameState, botId: number): Card {
+    const bot = gameState.players.find(p => p.id === botId);
+    if (!bot || bot.hand.length === 0) throw new Error("Bot error");
+
+    const hand = bot.hand;
+    const trick = gameState.currentTrick;
+    const leadSuit = gameState.leadSuit;
+    const heartsBroken = gameState.heartsBroken;
+
+    // 1. Legal Moves
+    let legalMoves: Card[] = [];
+    if (trick.length === 0) {
+        if (!heartsBroken) {
+            legalMoves = hand.filter(c => c.suit !== 'hearts');
+            if (legalMoves.length === 0) legalMoves = hand;
+        } else {
+            legalMoves = hand;
+        }
+    } else {
+        const suitCards = hand.filter(c => c.suit === leadSuit);
+        legalMoves = suitCards.length > 0 ? suitCards : hand;
+    }
+
+    if (legalMoves.length === 1) return legalMoves[0];
+
+    // 2. Hal B Strategy
+    
+    // SCARTO (No seme)
+    if (trick.length > 0 && hand.filter(c => c.suit === leadSuit).length === 0) {
+        const qSpade = legalMoves.find(c => c.suit === 'spades' && c.rank === 'Q');
+        if (qSpade) return qSpade; // Via la Q
+
+        const highHearts = legalMoves.filter(c => c.suit === 'hearts').sort((a,b) => b.value - a.value);
+        if (highHearts.length > 0) return highHearts[0]; // Via cuori alti
+
+        const highCards = [...legalMoves].sort((a, b) => b.value - a.value);
+        return highCards[0]; // Via carichi
+    }
+
+    // FOLLOW
+    if (trick.length > 0) {
+        let currentWinnerVal = -1;
+        trick.forEach(t => {
+            if (t.card.suit === leadSuit && t.card.value > currentWinnerVal) currentWinnerVal = t.card.value;
+        });
+
+        const sortedMoves = [...legalMoves].sort((a, b) => b.value - a.value);
+        
+        // Cerca di stare sotto
+        const safeCard = sortedMoves.find(c => c.value < currentWinnerVal);
+        
+        if (safeCard) {
+            return safeCard;
+        } else {
+            // Se devi prendere
+            // Cerca di non giocare la Q di picche se ti costringerebbe a prenderla tu stesso (raro in follow, ma possibile se lead è picche)
+            // Hal B butta il carico più alto
+            return sortedMoves[0]; 
+        }
+    }
+
+    // LEAD
+    // Hal B gioca basso e sicuro
+    const safeLeads = legalMoves.filter(c => !(c.suit === 'spades' && ['Q', 'K', 'A'].includes(c.rank)));
+    const candidates = safeLeads.length > 0 ? safeLeads : legalMoves;
+    candidates.sort((a, b) => a.value - b.value);
+    return candidates[0];
 }

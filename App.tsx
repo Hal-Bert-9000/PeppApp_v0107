@@ -280,10 +280,10 @@ const App: React.FC = () => {
 
   const getTranslatedDirection = (dir: PassDirection) => {
     switch (dir) {
-      case 'left': return 'Sinistra';
-      case 'right': return 'Destra';
-      case 'across': return 'Centro';
-      case 'none': return 'Non si passano';
+      case 'left': return 'S';
+      case 'right': return 'D';
+      case 'across': return 'C';
+      case 'none': return '-';
       default: return dir;
     }
   };
@@ -302,14 +302,16 @@ const App: React.FC = () => {
         <div className="absolute right-[1vw] top-[70vh] z-20">
           <PlayerInfoWidget player={gameState.players[3]} isBot={true} isCurrent={gameState.turnIndex === 3 && gameState.gameStatus === 'playing'} />
         </div>
-        {/* -------- POSIZIONE VALORE MANO 
+        
+        {/* -------- POSIZIONE VALORE MANO (FLUTTUANTE AL CENTRO) -------- */}
         {gameState.currentTrick.length > 0 && (
-          <div className="absolute top-[35%] left-[45%] -translate-x-1/2 z-[300]">
+          <div className="absolute top-[35%] left-[50%] -translate-x-1/2 -translate-y-1/2 z-[300]">
              <div className={`animate-pulse slow text-5xl font-extrabold drop-shadow-[0_0_16px_rgba(255,255,255,0.8)] ${currentTrickValue >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {currentTrickValue > 0 ? `+${currentTrickValue}` : currentTrickValue}
              </div>
           </div>
-        )}     ---------*/}
+        )}    
+
         {/* --------------- POSIZIONE CARTE SUL TAVOLO ------------------*/}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none shadow-none">
           {gameState.currentTrick.map((t) => {
@@ -330,48 +332,64 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* ----------------------- NAVBAR DI GIOCO ------------------------------*/}
-      <div className="fixed bottom-3 left-6 z-[300] pointer-events-none">
-        <div className="bg-black/85 backdrop-blur-md rounded-xl border border-white/10 px-5 py-2 flex items-center gap-5 shadow-2xl pointer-events-auto">
-          <div className="flex flex-col">
-            <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Mano</span>
-            <span className="font-bold text-base text-white leading-none">{gameState.roundNumber} / { TOTAL_ROUNDS }</span>
-          </div>
-          <div className="w-[1px] h-8 bg-white/10" />
-          <div className="flex flex-col">
-            <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Round</span>
-            <span className="font-bold text-base text-yellow-400 leading-none uppercase">{getTranslatedDirection(gameState.passDirection)}</span>
-          </div>
-          {/* PUNTEGGIO TRICK -- VALORE MANO */}
-          {gameState.currentTrick.length > 0 && (
-          <div className="flex flex-col">
-            <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Trk-Pt</span>
-            <span className={`animate-pulse slow text-base font-bold ${currentTrickValue >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                {currentTrickValue > 0 ? `+${currentTrickValue}` : currentTrickValue}</span>
-          </div>
-          )}
-          {gameState.gameStatus === 'playing' && (
-            <>
-            {/* TIME */}
-              <div className="w-[1px] h-8 bg-white/10" />
-              <div className="flex flex-col">
+      {/* --------------------- USER DASHBOARD WIDGET (SUD) ---------------------- */}
+      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[300] pointer-events-none">
+        <div className={`flex flex-row items-center justify-between gap-2 bg-black/65 px-2 py-2 rounded-xl border ${gameState.turnIndex === 0 && gameState.gameStatus === 'playing' ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'border-white/10'} shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
+            
+            {/* 1. Mano */}
+            <div className="flex flex-col items-center w-[40px]">
+                <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Mano</span>
+                <span className="font-bold text-base text-white">{gameState.roundNumber} / {TOTAL_ROUNDS}</span>
+            </div>
+            <div className="w-[1px] h-8 bg-white/10" />
+
+            {/* 2. Round */}
+            <div className="flex flex-col items-center w-[40px]">
+                <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Round</span>
+                <span className="font-bold text-base text-yellow-400 uppercase">{getTranslatedDirection(gameState.passDirection)}</span>
+            </div>
+            <div className="w-[1px] h-8 bg-white/10" />
+
+            {/* 3. Giocatore */}
+            <div className="flex flex-col items-center w-[140px]">
+                <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Giocatore</span>
+                <span className="font-bold text-base text-white truncate w-full text-center">{gameState.players[0].name}</span>
+            </div>
+            <div className="w-[1px] h-8 bg-white/10" />
+
+            {/* 4. Rank */}
+             <div className="flex flex-col items-center w-[40px]">
+                <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Rank</span>
+                <span className="font-bold text-yellow-400 text-base">{getRank(0)}°</span>
+            </div>
+            <div className="w-[1px] h-8 bg-white/10" />
+
+            {/* 5. Prese */}
+            <div className="flex flex-col items-center w-[40px]">
+                <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Prese</span>
+                <span className="font-bold text-base text-emerald-400">{gameState.players[0].tricksWon}</span>
+            </div>
+             <div className="w-[1px] h-8 bg-white/10" />
+
+            {/* 6. Punti */}
+            <div className="flex flex-col items-center w-[40px]">
+                <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Punti</span>
+                <span className={`font-bold text-base ${gameState.players[0].score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {gameState.players[0].score}
+                </span>
+            </div>
+             <div className="w-[1px] h-8 bg-white/10" />
+
+            {/* 7. Time */}
+             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Time</span>
-                <span className={`font-bold text-base transition-all duration-300 ${timeLeft < 10 ? 'text-red-500 animate-pulse' : 'text-white/95'}`}>
-                {timeLeft}s</span>
-              </div>  
-            </>
-          )}
+                <span className={`font-bold text-base transition-all duration-300 ${timeLeft < 10 && gameState.gameStatus === 'playing' ? 'text-red-500 animate-pulse' : 'text-white/60'}`}>
+                    {gameState.gameStatus === 'playing' ? `${timeLeft}s` : '--'}
+                </span>
+            </div>
         </div>
       </div>
 
-      {/* --------------------- USER INFO WIDGET ---------------------- */}
-      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[300] pointer-events-none">
-        <PlayerInfoWidget 
-          player={gameState.players[0]} 
-          isBot={false} 
-          isCurrent={gameState.turnIndex === 0 && gameState.gameStatus === 'playing'} 
-        />
-      </div>
       {/* -------------------  DISPOSIZIONE CARTE USER ----------------------*/}
       <div className="fixed bottom-[-85px] w-full flex justify-center z-[250] px-6">
         <div className="flex justify-center -space-x-20 md:-space-x-24 transition-all duration-500">

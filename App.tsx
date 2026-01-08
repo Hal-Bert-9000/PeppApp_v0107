@@ -279,7 +279,7 @@ const App: React.FC = () => {
   const PlayerInfoWidget = ({ player, isBot, isCurrent, isLastWinner }: { player: Player, isBot: boolean, isCurrent: boolean, isLastWinner: boolean }) => (
     <div className={`flex flex-row items-center gap-2 bg-black/65 px-2 py-2 rounded-xl border 
       ${isLastWinner 
-          ? 'border-b-4 border-b-sky-400 shadow-[0_15px_20px_rgba(56,189,248,0.85)] border-t-white/10 border-x-white/10' 
+          ? 'border-b-4 border-b-sky-400 shadow-[0_2px_2px_rgba(56,189,248,0.85)] border-t-white/10 border-x-white/10' 
           : (isCurrent 
               ? 'border-yellow-400 scale-105 shadow-[0_15px_15px_rgba(250,204,21,0.65)]' 
               : 'border-white/10')

@@ -89,6 +89,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (gameState.gameStatus === 'passing') {
+      if (gameState.passDirection === 'none') return; // Nessun passaggio automatico per i bot se 'none'
+      
       const botsWithoutPass = gameState.players.filter(p => !p.isHuman && p.selectedToPass.length === 0);
       botsWithoutPass.forEach(async (bot) => {
         const fallbackIds = [...bot.hand].sort((a, b) => b.value - a.value).slice(0, 3).map(c => c.id);
@@ -98,7 +100,7 @@ const App: React.FC = () => {
         }));
       });
     }
-  }, [gameState.gameStatus]);
+  }, [gameState.gameStatus, gameState.passDirection]);
 
   useEffect(() => {
     if (gameState.gameStatus === 'playing' && gameState.currentTrick.length < 4) {
@@ -202,7 +204,7 @@ const App: React.FC = () => {
     }));
     
     setGameState(prev => ({
-      ...prev, players: newPlayers, passDirection: dir, gameStatus: dir === 'none' ? 'playing' : 'passing',
+      ...prev, players: newPlayers, passDirection: dir, gameStatus: 'passing', // Sempre 'passing' per mostrare il popup
       currentTrick: [], turnIndex: startingPlayerIndex, heartsBroken: false, leadSuit: null, receivedCards: [],
       winningMessage: null
     }));
@@ -253,27 +255,29 @@ const App: React.FC = () => {
     }
     return pts;
   }, [gameState.currentTrick]);
-
+  {/* --------------- COMPOSIZIONE UI_SMALL ------------------*/}
   const PlayerInfoWidget = ({ player, isBot, isCurrent }: { player: Player, isBot: boolean, isCurrent: boolean }) => (
-    <div className={`flex flex-row items-center gap-3 bg-black/85 px-4 py-1.5 rounded-xl border ${isCurrent ? 'border-yellow-400 scale-105 shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'border-white/10'} shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
+    <div className={`flex flex-row items-center gap-2 bg-black/65 px-2 py-2 rounded-xl border ${isCurrent ? 'border-yellow-400 scale-105 shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'border-white/10'} shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
       <div className="flex flex-col min-w-[70px]">
         <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-0.5">{isBot ? 'Bot' : 'Giocatore'}</span>
         <span className="font-bold text-sm tracking-tight truncate">{player.name}</span>
       </div>
       <div className="w-[1px] h-6 bg-white/10" />
-      <div className="flex flex-col items-center">
+      <div className="flex flex-col items-center w-[40px]">
+        <span className="text-[9px] font-bold opacity-40 uppercase">Rank</span>
+        <span className="font-bold text-yellow-400 text-base">{getRank(player.id)}°</span>
+      </div>
+      <div className="w-[1px] h-6 bg-white/10" />
+      <div className="flex flex-col items-center w-[40px]">
+        <span className="text-[9px] font-bold opacity-40 uppercase">Prese</span>
+        <span className="font-bold text-base text-emerald-400">{player.tricksWon}</span>
+      </div>
+      <div className="w-[1px] h-6 bg-white/10" />
+      <div className="flex flex-col items-center w-[40px]">
         <span className="text-[9px] font-bold opacity-40 uppercase">Punti</span>
         <span className={`font-bold text-base ${player.score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
           {player.score}
         </span>
-      </div>
-      <div className="flex flex-col items-center">
-        <span className="text-[9px] font-bold opacity-40 uppercase">Prese</span>
-        <span className="font-bold text-base text-emerald-400">{player.tricksWon}</span>
-      </div>
-      <div className="flex flex-col items-center">
-        <span className="text-[9px] font-bold opacity-40 uppercase">Rank</span>
-        <span className="font-bold text-yellow-400 text-base">{getRank(player.id)}°</span>
       </div>
     </div>
   );
@@ -285,6 +289,16 @@ const App: React.FC = () => {
       case 'across': return 'C';
       case 'none': return '-';
       default: return dir;
+    }
+  };
+
+  const getPassDirectionDescription = (dir: PassDirection) => {
+    switch (dir) {
+      case 'left': return 'LE CARTE SI PASSANO A SINISTRA';
+      case 'right': return 'LE CARTE SI PASSANO A DESTRA';
+      case 'across': return 'LE CARTE SI PASSANO AL CENTRO';
+      case 'none': return 'LE CARTE NON SI PASSANO';
+      default: return '';
     }
   };
 
@@ -339,7 +353,7 @@ const App: React.FC = () => {
             {/* 1. Mano */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Mano</span>
-                <span className="font-bold text-base text-white">{gameState.roundNumber} / {TOTAL_ROUNDS}</span>
+                <span className="font-bold text-base text-white tracking-tighter">{gameState.roundNumber} / {TOTAL_ROUNDS}</span>
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
@@ -350,28 +364,37 @@ const App: React.FC = () => {
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 3. Giocatore */}
-            <div className="flex flex-col items-center w-[140px]">
-                <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Giocatore</span>
-                <span className="font-bold text-base text-white truncate w-full text-center">{gameState.players[0].name}</span>
+            {/* 3. TRK.PT (NEW) */}
+             <div className="flex flex-col items-center w-[40px]">
+                <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">TRK.PT</span>
+                <span className={`font-bold text-base ${gameState.currentTrick.length === 0 ? 'text-white/60' : (currentTrickValue >= 0 ? 'text-emerald-400' : 'text-red-400')}`}>
+                   {gameState.currentTrick.length === 0 ? '--' : (currentTrickValue > 0 ? `+${currentTrickValue}` : currentTrickValue)}
+                </span>
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 4. Rank */}
+            {/* 4. Giocatore */}
+            <div className="flex flex-col items-center w-[140px]">
+                <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Giocatore</span>
+                <span className="font-bold text-xl text-white truncate w-full text-center">{gameState.players[0].name}</span>
+            </div>
+            <div className="w-[1px] h-8 bg-white/10" />
+
+            {/* 5. Rank */}
              <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Rank</span>
                 <span className="font-bold text-yellow-400 text-base">{getRank(0)}°</span>
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 5. Prese */}
+            {/* 6. Prese */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Prese</span>
                 <span className="font-bold text-base text-emerald-400">{gameState.players[0].tricksWon}</span>
             </div>
              <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 6. Punti */}
+            {/* 7. Punti */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold opacity-40 uppercase mb-1">Punti</span>
                 <span className={`font-bold text-base ${gameState.players[0].score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -380,7 +403,7 @@ const App: React.FC = () => {
             </div>
              <div className="w-[1px] h-8 bg-white/10" />
 
-            {/* 7. Time */}
+            {/* 8. Time */}
              <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Time</span>
                 <span className={`font-bold text-base transition-all duration-300 ${timeLeft < 10 && gameState.gameStatus === 'playing' ? 'text-red-500 animate-pulse' : 'text-white/60'}`}>
@@ -402,7 +425,7 @@ const App: React.FC = () => {
               <div key={card.id} className={`transition-all duration-500 transform ${isSelected ? '-translate-y-8 scale-105 z-[350]' : 'hover:-translate-y-16 hover:z-[350] hover:scale-105 z-10'}`} style={{ zIndex: i }}>
                 <div className="scale-110 md:scale-120">
                   <PlayingCard card={card} noShadow noBorder highlighted={isSelected || (isPlayable && gameState.gameStatus === 'playing')} onClick={() => {
-                    if (gameState.gameStatus === 'passing') toggleSelectToPass(card.id);
+                    if (gameState.gameStatus === 'passing' && gameState.passDirection !== 'none') toggleSelectToPass(card.id);
                     if (gameState.gameStatus === 'playing' && isPlayable && !isProcessing) playCard(0, card);
                   }} />
                 </div>
@@ -414,9 +437,24 @@ const App: React.FC = () => {
       {/* ------------------  PASSA 3 CARTE ---------------------*/}
       {gameState.gameStatus === 'passing' && (
         <div className="fixed inset-0 z-[400] flex items-center justify-center pointer-events-none">
-          <div className="bg-black/95 p-6 rounded-2xl border border-yellow-400/50 text-center shadow-[0_0_100px_rgba(0,0,0,0.8)] animate-deal pointer-events-auto max-w-xs transform -translate-y-40">
-            <h2 className="text-xl font-extrabold mb-1 text-yellow-400 uppercase tracking-tighter leading-none">PASSA 3 CARTE A {getTranslatedDirection(gameState.passDirection).toUpperCase()}</h2>
-            <button disabled={gameState.players[0].selectedToPass.length !== 3} onClick={executePass} className={`w-full mt-4 py-3 rounded-xl font-extrabold text-lg transition-all duration-300 ${gameState.players[0].selectedToPass.length === 3 ? 'bg-yellow-400 text-black shadow-lg cursor-pointer hover:bg-white' : 'bg-white/5 text-white/50 cursor-not-allowed'}`}>{gameState.players[0].selectedToPass.length === 3 ? 'CONFERMA' : `${3 - gameState.players[0].selectedToPass.length} DA SCEGLIERE`}</button>
+          <div className="bg-black/95 p-6 rounded-2xl border border-yellow-400/50 text-center shadow-[0_0_100px_rgba(0,0,0,0.8)] animate-deal pointer-events-auto max-w-md transform -translate-y-40">
+            <h2 className="text-xl font-extrabold mb-1 text-yellow-400 uppercase tracking-tighter leading-none">{getPassDirectionDescription(gameState.passDirection)}</h2>
+            {gameState.passDirection === 'none' ? (
+                <button 
+                  onClick={() => setGameState(prev => ({ ...prev, gameStatus: 'playing' }))}
+                  className="w-full mt-4 py-3 rounded-xl font-extrabold text-lg transition-all duration-300 bg-yellow-400 text-black shadow-lg cursor-pointer hover:bg-white"
+                >
+                  GIOCA
+                </button>
+            ) : (
+                <button 
+                  disabled={gameState.players[0].selectedToPass.length !== 3} 
+                  onClick={executePass} 
+                  className={`w-full mt-4 py-3 rounded-xl font-extrabold text-lg transition-all duration-300 ${gameState.players[0].selectedToPass.length === 3 ? 'bg-yellow-400 text-black shadow-lg cursor-pointer hover:bg-white' : 'bg-white/5 text-white/50 cursor-not-allowed'}`}
+                >
+                  {gameState.players[0].selectedToPass.length === 3 ? 'CONFERMA' : `${3 - gameState.players[0].selectedToPass.length} DA SCEGLIERE`}
+                </button>
+            )}
           </div>
         </div>
       )}
@@ -468,7 +506,8 @@ const App: React.FC = () => {
         <div className="fixed bottom-[10%] bg-black/98 z-[700] flex items-center justify-center">
           <div className="text-center animate-deal">
             <h1 className="text-[12rem] font-extrabold tracking-tighter text-yellow-400 leading-none">ROUND{gameState.roundNumber}</h1>
-            <p className="text-3xl mb-12 font-extrabold tracking-[0.5em]">{isUserDealer ? 'SERVI LE CARTE' : `SERVE LE CARTE: ${gameState.players[dealerIndex].name}`}</p>
+            <p className="text-2xl mb-2 font-extrabold text-yellow-400 uppercase tracking-wide leading-none">{getPassDirectionDescription(gameState.passDirection)}</p>
+            <p className="text-3xl mb-12 font-extrabold tracking-[0.5em]">{isUserDealer ? 'SERVI TU LE CARTE' : `SERVE LE CARTE: ${gameState.players[dealerIndex].name}`}</p>
             <button onClick={startNewRound} className="bg-white text-black px-6 py-2 rounded-xl font-extrabold text-3xl shadow-xl hover:scale-105 active:scale-95 transition-all">VAI</button>
           </div>
         </div>

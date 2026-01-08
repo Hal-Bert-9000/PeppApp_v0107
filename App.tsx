@@ -7,7 +7,7 @@ import PlayingCard from './components/PlayingCard';
 
 const TOTAL_ROUNDS = 4;
 const USER_TURN_TIME = 40;
-const BOT_MAX_TIME = 15; // Aumentato visualmente per matchare il timeout AI
+const BOT_MAX_TIME = 5;
 const ATTESA = 2000; // ms
 
 const AI_NAMES = [
@@ -66,14 +66,7 @@ const App: React.FC = () => {
     if (leadSuit) {
       const sameSuit = hand.filter(c => c.suit === leadSuit);
       if (sameSuit.length > 0) playable = sameSuit;
-    } else {
-        // Se non c'è lead suit e i cuori non sono rotti, evita di giocare cuori se possibile
-        if (!heartsBroken && hand.length > 0) {
-            const nonHearts = hand.filter(c => c.suit !== 'hearts');
-            if (nonHearts.length > 0) playable = nonHearts;
-        }
     }
-    // Euristica semplice: gioca la carta più bassa disponibile
     return [...playable].sort((a,b) => a.value - b.value)[0];
   }, []);
 
@@ -96,83 +89,49 @@ const App: React.FC = () => {
     });
   }, []);
 
-  // --- GESTIONE PASSAGGIO CARTE BOT (INTEGRAZIONE GEMINI) ---
   useEffect(() => {
     if (gameState.gameStatus === 'passing') {
-      if (gameState.passDirection === 'none') return; 
+      if (gameState.passDirection === 'none') return; // Nessun passaggio automatico per i bot se 'none'
       
       const botsWithoutPass = gameState.players.filter(p => !p.isHuman && p.selectedToPass.length === 0);
-      
-      // Funzione asincrona per gestire la selezione delle carte dei bot
-      const processBotPasses = async () => {
-          for (const bot of botsWithoutPass) {
-              // getAiPass ha già un fallback interno se Gemini fallisce/timeout
-              const selectedIds = await getAiPass(bot.hand);
-              
-              setGameState(prev => ({
-                ...prev,
-                players: prev.players.map(p => p.id === bot.id ? { ...p, selectedToPass: selectedIds } : p)
-              }));
-          }
-      };
-
-      if (botsWithoutPass.length > 0) {
-          processBotPasses();
-      }
+      botsWithoutPass.forEach(async (bot) => {
+        const fallbackIds = [...bot.hand].sort((a, b) => b.value - a.value).slice(0, 3).map(c => c.id);
+        setGameState(prev => ({
+          ...prev,
+          players: prev.players.map(p => p.id === bot.id ? { ...p, selectedToPass: fallbackIds } : p)
+        }));
+      });
     }
-  }, [gameState.gameStatus, gameState.passDirection, gameState.players]); // Aggiunto gameState.players per monitorare changes
+  }, [gameState.gameStatus, gameState.passDirection]);
 
-  // --- TIMER ---
   useEffect(() => {
     if (gameState.gameStatus === 'playing' && gameState.currentTrick.length < 4) {
       const currentPlayer = gameState.players[gameState.turnIndex];
-      // Se è un bot diamo tempo visivo fino a 15s, se umano 40s
       setTimeLeft(currentPlayer.isHuman ? USER_TURN_TIME : BOT_MAX_TIME);
-      
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(() => setTimeLeft(prev => prev > 0 ? prev - 1 : 0), 1000);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length]);
 
-  // --- AUTO-PLAY UMANO SE SCADE TEMPO ---
   useEffect(() => {
     if (timeLeft === 0 && gameState.gameStatus === 'playing' && !isProcessing) {
       const currentPlayer = gameState.players[gameState.turnIndex];
-      // Solo per umano, i bot sono gestiti dall'effetto successivo
-      if (currentPlayer.isHuman && currentPlayer.hand.length > 0) {
-        const card = getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
-        if (card) playCard(gameState.turnIndex, card);
-      }
+      if (currentPlayer.hand.length === 0) return;
+      const card = getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
+      if (card) playCard(gameState.turnIndex, card);
     }
   }, [timeLeft, gameState.gameStatus, isProcessing]);
 
-  // --- GESTIONE MOSSA BOT (INTEGRAZIONE GEMINI CON TIMEOUT) ---
   useEffect(() => {
     const currentPlayer = gameState.players[gameState.turnIndex];
-    
-    // Se tocca a un bot, non stiamo già processando e la mano non è finita
     if (gameState.gameStatus === 'playing' && !currentPlayer.isHuman && gameState.currentTrick.length < 4 && !isProcessing) {
       setIsProcessing(true);
-
-      const makeBotMove = async () => {
-          // Attesa minima di 1 secondo per UX (così non gioca istantaneamente)
-          const minDelayPromise = new Promise(resolve => setTimeout(resolve, 1000));
-          
-          // Chiamata a Gemini (che ha un timeout interno di 15s nel service)
-          const aiMovePromise = getAiMove(gameState, currentPlayer.id);
-
-          // Attendiamo il completamento di entrambi (il più lento definisce il tempo, ma Gemini ha un cap di 15s)
-          const [_, aiCard] = await Promise.all([minDelayPromise, aiMovePromise]);
-          
-          // Se Gemini restituisce null (errore o timeout), usiamo l'euristica
-          const finalCard = aiCard || getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
-          
-          playCard(gameState.turnIndex, finalCard);
-          setIsProcessing(false);
-      };
-
-      makeBotMove();
+      setTimeout(() => {
+        const finalCard = getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
+        playCard(gameState.turnIndex, finalCard);
+        setIsProcessing(false);
+      }, 1000);
     }
   }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length]);
 
@@ -320,9 +279,9 @@ const App: React.FC = () => {
   const PlayerInfoWidget = ({ player, isBot, isCurrent, isLastWinner }: { player: Player, isBot: boolean, isCurrent: boolean, isLastWinner: boolean }) => (
     <div className={`flex flex-row items-center gap-2 bg-black/65 px-2 py-2 rounded-xl border 
       ${isLastWinner 
-          ? 'border-b-4 border-b-sky-400 shadow-[0_15px_20px_rgba(44,153,255,0.85)] border-t-white/10 border-x-white/10' // shadow-[0_0_25px_5px_rgba(44,153,255,10.85)]
+          ? 'border-b-4 border-b-sky-400 shadow-[0_15px_20px_rgba(56,189,248,0.85)] border-t-white/10 border-x-white/10' 
           : (isCurrent 
-              ? 'border-yellow-400 scale-105 shadow-[0_0_15px_rgba(250,204,21,0.3)]' 
+              ? 'border-yellow-400 scale-105 shadow-[0_15px_15px_rgba(250,204,21,0.65)]' 
               : 'border-white/10')
       } 
       shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
@@ -338,7 +297,7 @@ const App: React.FC = () => {
       <div className="w-[1px] h-6 bg-white/10" />
       <div className="flex flex-col items-center w-[40px]">
         <span className="text-[9px] font-bold opacity-40 uppercase">Prese</span>
-        <span className="font-bold text-base text-cyan-400">{player.tricksWon}</span>
+        <span className="font-bold text-base text-sky-400">{player.tricksWon}</span>
       </div>
       <div className="w-[1px] h-6 bg-white/10" />
       <div className="flex flex-col items-center w-[40px]">
@@ -383,16 +342,7 @@ const App: React.FC = () => {
         </div>
         <div className="absolute right-[1vw] top-[70vh] z-20">
           <PlayerInfoWidget player={gameState.players[3]} isBot={true} isCurrent={gameState.turnIndex === 3 && gameState.gameStatus === 'playing'} isLastWinner={lastWinnerId === 3} />
-        </div>
-        
-        {/* -------- POSIZIONE VALORE MANO (FLUTTUANTE AL CENTRO) 
-        {gameState.currentTrick.length > 0 && (
-          <div className="absolute top-[35%] left-[50%] -translate-x-1/2 -translate-y-1/2 z-[300]">
-             <div className={`animate-pulse slow text-5xl font-extrabold drop-shadow-[0_0_16px_rgba(255,255,255,0.8)] ${currentTrickValue >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                {currentTrickValue > 0 ? `+${currentTrickValue}` : currentTrickValue}
-             </div>
-          </div>
-        )}    -------- */}
+        </div
 
         {/* --------------- POSIZIONE CARTE SUL TAVOLO ------------------*/}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none shadow-none">
@@ -418,9 +368,9 @@ const App: React.FC = () => {
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[350] pointer-events-none">
         <div className={`flex flex-row items-center justify-between gap-2 bg-black/65 px-2 py-2 rounded-xl border 
             ${lastWinnerId === 0 
-                ? 'border-t-4 border-t-sky-400 shadow-[0_-15px_20px_rgba(44,153,255,0.85)] border-b-white/10 border-x-white/10' // originale: shadow-[0_0_25px_rgba(34,211,238,0.5)]
+                ? 'border-t-4 border-t-sky-400 shadow-[0_-15px_20px_rgba(56,189,248,0.85)] border-b-white/10 border-x-white/10'
                 : (gameState.turnIndex === 0 && gameState.gameStatus === 'playing' 
-                    ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.3)]' 
+                    ? 'border-yellow-400 shadow-[0_-15_15px_rgba(250,204,21,0.65)]' 
                     : 'border-white/10')
             } 
             shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
@@ -428,7 +378,7 @@ const App: React.FC = () => {
             {/* 1. Mano */}
             <div className="flex flex-col items-center w-[40px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Mano</span>
-                <span className="font-bold text-base text-white tracking-tighter">{gameState.roundNumber} / {TOTAL_ROUNDS}</span>
+                <span className="font-bold text-base text-white tracking-[-1.5]">{gameState.roundNumber} / {TOTAL_ROUNDS}</span>
             </div>
             <div className="w-[1px] h-8 bg-white/10" />
 
@@ -449,7 +399,7 @@ const App: React.FC = () => {
             <div className="w-[1px] h-8 bg-white/10" />
 
             {/* 4. Giocatore */}
-            <div className="flex flex-col items-center w-[140px]">
+            <div className="flex flex-col items-center w-[160px]">
                 <span className="text-[9px] font-bold uppercase opacity-40 leading-none mb-1">Giocatore</span>
                 <span className="font-bold text-xl text-white truncate w-full text-center">{gameState.players[0].name}</span>
             </div>

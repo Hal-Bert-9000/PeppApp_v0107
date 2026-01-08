@@ -7,7 +7,7 @@ import PlayingCard from './components/PlayingCard';
 
 const TOTAL_ROUNDS = 4;
 const USER_TURN_TIME = 40;
-const BOT_MAX_TIME = 5;
+const BOT_MAX_TIME = 15; // Aumentato visualmente per matchare il timeout AI
 const ATTESA = 2000; // ms
 
 const AI_NAMES = [
@@ -66,7 +66,14 @@ const App: React.FC = () => {
     if (leadSuit) {
       const sameSuit = hand.filter(c => c.suit === leadSuit);
       if (sameSuit.length > 0) playable = sameSuit;
+    } else {
+        // Se non c'è lead suit e i cuori non sono rotti, evita di giocare cuori se possibile
+        if (!heartsBroken && hand.length > 0) {
+            const nonHearts = hand.filter(c => c.suit !== 'hearts');
+            if (nonHearts.length > 0) playable = nonHearts;
+        }
     }
+    // Euristica semplice: gioca la carta più bassa disponibile
     return [...playable].sort((a,b) => a.value - b.value)[0];
   }, []);
 
@@ -89,49 +96,83 @@ const App: React.FC = () => {
     });
   }, []);
 
+  // --- GESTIONE PASSAGGIO CARTE BOT (INTEGRAZIONE GEMINI) ---
   useEffect(() => {
     if (gameState.gameStatus === 'passing') {
-      if (gameState.passDirection === 'none') return; // Nessun passaggio automatico per i bot se 'none'
+      if (gameState.passDirection === 'none') return; 
       
       const botsWithoutPass = gameState.players.filter(p => !p.isHuman && p.selectedToPass.length === 0);
-      botsWithoutPass.forEach(async (bot) => {
-        const fallbackIds = [...bot.hand].sort((a, b) => b.value - a.value).slice(0, 3).map(c => c.id);
-        setGameState(prev => ({
-          ...prev,
-          players: prev.players.map(p => p.id === bot.id ? { ...p, selectedToPass: fallbackIds } : p)
-        }));
-      });
-    }
-  }, [gameState.gameStatus, gameState.passDirection]);
+      
+      // Funzione asincrona per gestire la selezione delle carte dei bot
+      const processBotPasses = async () => {
+          for (const bot of botsWithoutPass) {
+              // getAiPass ha già un fallback interno se Gemini fallisce/timeout
+              const selectedIds = await getAiPass(bot.hand);
+              
+              setGameState(prev => ({
+                ...prev,
+                players: prev.players.map(p => p.id === bot.id ? { ...p, selectedToPass: selectedIds } : p)
+              }));
+          }
+      };
 
+      if (botsWithoutPass.length > 0) {
+          processBotPasses();
+      }
+    }
+  }, [gameState.gameStatus, gameState.passDirection, gameState.players]); // Aggiunto gameState.players per monitorare changes
+
+  // --- TIMER ---
   useEffect(() => {
     if (gameState.gameStatus === 'playing' && gameState.currentTrick.length < 4) {
       const currentPlayer = gameState.players[gameState.turnIndex];
+      // Se è un bot diamo tempo visivo fino a 15s, se umano 40s
       setTimeLeft(currentPlayer.isHuman ? USER_TURN_TIME : BOT_MAX_TIME);
+      
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(() => setTimeLeft(prev => prev > 0 ? prev - 1 : 0), 1000);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length]);
 
+  // --- AUTO-PLAY UMANO SE SCADE TEMPO ---
   useEffect(() => {
     if (timeLeft === 0 && gameState.gameStatus === 'playing' && !isProcessing) {
       const currentPlayer = gameState.players[gameState.turnIndex];
-      if (currentPlayer.hand.length === 0) return;
-      const card = getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
-      if (card) playCard(gameState.turnIndex, card);
+      // Solo per umano, i bot sono gestiti dall'effetto successivo
+      if (currentPlayer.isHuman && currentPlayer.hand.length > 0) {
+        const card = getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
+        if (card) playCard(gameState.turnIndex, card);
+      }
     }
   }, [timeLeft, gameState.gameStatus, isProcessing]);
 
+  // --- GESTIONE MOSSA BOT (INTEGRAZIONE GEMINI CON TIMEOUT) ---
   useEffect(() => {
     const currentPlayer = gameState.players[gameState.turnIndex];
+    
+    // Se tocca a un bot, non stiamo già processando e la mano non è finita
     if (gameState.gameStatus === 'playing' && !currentPlayer.isHuman && gameState.currentTrick.length < 4 && !isProcessing) {
       setIsProcessing(true);
-      setTimeout(() => {
-        const finalCard = getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
-        playCard(gameState.turnIndex, finalCard);
-        setIsProcessing(false);
-      }, 1000);
+
+      const makeBotMove = async () => {
+          // Attesa minima di 1 secondo per UX (così non gioca istantaneamente)
+          const minDelayPromise = new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Chiamata a Gemini (che ha un timeout interno di 15s nel service)
+          const aiMovePromise = getAiMove(gameState, currentPlayer.id);
+
+          // Attendiamo il completamento di entrambi (il più lento definisce il tempo, ma Gemini ha un cap di 15s)
+          const [_, aiCard] = await Promise.all([minDelayPromise, aiMovePromise]);
+          
+          // Se Gemini restituisce null (errore o timeout), usiamo l'euristica
+          const finalCard = aiCard || getHeuristicMove(currentPlayer.hand, gameState.leadSuit, gameState.heartsBroken);
+          
+          playCard(gameState.turnIndex, finalCard);
+          setIsProcessing(false);
+      };
+
+      makeBotMove();
     }
   }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length]);
 

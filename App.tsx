@@ -8,6 +8,7 @@ import PlayingCard from './components/PlayingCard';
 const TOTAL_ROUNDS = 4;
 const USER_TURN_TIME = 40;
 const BOT_MAX_TIME = 5;
+const ATTESA = 2000; // ms
 
 const AI_NAMES = [
   "Andrew Martin", "Bomb #20", "HAL 9000", "Joshua WOPR", 
@@ -134,9 +135,9 @@ const App: React.FC = () => {
   }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length]);
 
   useEffect(() => {
-    if (gameState.currentTrick.length === 4) {
-      const timer = setTimeout(() => {
-        setGameState(prev => {
+    if (gameState.currentTrick.length === 4) { // <-- QUANDO CI SONO 4 CARTE SUL TAVOLO
+      const timer = setTimeout(() => {         // <-- ATTESA in ms inserita nelle const in alto
+        setGameState(prev => {                 // ... calcolo del vincitore, assegnazione punti e pulizia del tavolo ...
           const trick = prev.currentTrick;
           const leadSuitUsed = prev.leadSuit!;
           let winnerId = trick[0].playerId;
@@ -187,7 +188,7 @@ const App: React.FC = () => {
           }
           return { ...prev, players: nextPlayers, currentTrick: [], turnIndex: winnerId, leadSuit: null };
         });
-      }, 1500);
+      }, ATTESA);
       return () => clearTimeout(timer);
     }
   }, [gameState.currentTrick]);
@@ -332,10 +333,10 @@ const App: React.FC = () => {
             let positionClasses = "";
             let rotation = "";
             switch (t.playerId) {
-              case 0: positionClasses = "bottom-[22%] left-[49%] -translate-x-1/2 z-[300]"; rotation = "rotate-0"; break;
-              case 1: positionClasses = "left-[42%] top-[48%] -translate-y-1/2 z-[250]"; rotation = "-rotate-90"; break;
-              case 2: positionClasses = "top-[38%] left-[51%] -translate-x-1/2 z-[200]"; rotation = "rotate-180"; break;
-              case 3: positionClasses = "right-[40%] top-[49%] -translate-y-1/2 z-[250]"; rotation = "rotate-90"; break;
+              case 0: positionClasses = "left-[48%] top-[69%] -translate-x-1/2 scale-120 z-[300]"; rotation = "rotate-0"; break; // SUD USER
+              case 1: positionClasses = "left-[42%] top-[61%] -translate-y-1/2 z-[250]"; rotation = "-rotate-90"; break; // OVEST SINISTRA
+              case 2: positionClasses = "left-[51%] top-[51%] -translate-x-1/2 z-[200]"; rotation = "rotate-180"; break; // NORD 
+              case 3: positionClasses = "right-[40%] top-[62%] -translate-y-1/2 z-[250]"; rotation = "rotate-90"; break; // EST DESTRA
             }
             return (
               <div key={t.playerId} className={`absolute transition-all duration-500 animate-deal ${positionClasses} ${rotation} z-20`}>
@@ -347,7 +348,7 @@ const App: React.FC = () => {
       </div>
 
       {/* --------------------- USER DASHBOARD WIDGET (SUD) ---------------------- */}
-      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[300] pointer-events-none">
+      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[350] pointer-events-none">
         <div className={`flex flex-row items-center justify-between gap-2 bg-black/65 px-2 py-2 rounded-xl border ${gameState.turnIndex === 0 && gameState.gameStatus === 'playing' ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'border-white/10'} shadow-xl backdrop-blur-md transition-all duration-300 pointer-events-auto`}>
             
             {/* 1. Mano */}
@@ -413,21 +414,44 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* -------------------  DISPOSIZIONE CARTE USER ----------------------*/}
-      <div className="fixed bottom-[-85px] w-full flex justify-center z-[250] px-6">
-        <div className="flex justify-center -space-x-20 md:-space-x-24 transition-all duration-500">
+      {/* -------------------  DISPOSIZIONE CARTE USER A VENTAGLIO ----------------------*/}
+      <div className="fixed bottom-[-15px] w-full flex justify-center z-[250] px-6">
+        <div className="flex justify-center -space-x-[5rem] md:-space-x-[6rem] transition-all duration-500">
           {gameState.players[0].hand.map((card, i) => {
+            const total = gameState.players[0].hand.length;
+            const offset = i - (total - 1) / 2;
+            const rotation = offset * 4; 
+            const translateY = (offset * offset) * 1.65;
+
             const isSelected = gameState.players[0].selectedToPass.includes(card.id);
             const isPlayable = gameState.gameStatus === 'playing' && gameState.turnIndex === 0 && (
               !gameState.leadSuit || card.suit === gameState.leadSuit || gameState.players[0].hand.every(c => c.suit !== gameState.leadSuit)
             );
+            
             return (
-              <div key={card.id} className={`transition-all duration-500 transform ${isSelected ? '-translate-y-8 scale-105 z-[350]' : 'hover:-translate-y-16 hover:z-[350] hover:scale-105 z-10'}`} style={{ zIndex: i }}>
-                <div className="scale-110 md:scale-120">
-                  <PlayingCard card={card} noShadow noBorder highlighted={isSelected || (isPlayable && gameState.gameStatus === 'playing')} onClick={() => {
-                    if (gameState.gameStatus === 'passing' && gameState.passDirection !== 'none') toggleSelectToPass(card.id);
-                    if (gameState.gameStatus === 'playing' && isPlayable && !isProcessing) playCard(0, card);
-                  }} />
+              <div 
+                key={card.id} 
+                className="group relative transition-all duration-300" 
+                style={{ 
+                    zIndex: i,
+                    transform: `translateY(${translateY}px) rotate(${rotation}deg)`,
+                    transformOrigin: '50% 120%'
+                }}
+              >
+                <div 
+                    className={`transition-all duration-200 ${isSelected ? '-translate-y-8 scale-110 z-10' : 'hover:-translate-y-12 hover:scale-110 hover:z-10'}`}
+                >
+                    <div className="scale-110 md:scale-120">
+                      <PlayingCard 
+                        card={card} 
+                        noShadow 
+                        highlighted={isSelected || (isPlayable && gameState.gameStatus === 'playing')} 
+                        onClick={() => {
+                            if (gameState.gameStatus === 'passing' && gameState.passDirection !== 'none') toggleSelectToPass(card.id);
+                            if (gameState.gameStatus === 'playing' && isPlayable && !isProcessing) playCard(0, card);
+                        }} 
+                      />
+                    </div>
                 </div>
               </div>
             );

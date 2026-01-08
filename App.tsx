@@ -4,6 +4,7 @@ import { GameState, Card, Player, PassDirection, GameConfig } from './types';
 import { createDeck, shuffle } from './constants';
 import { getGemPass, getGemMove } from './services/gem_Ai';
 import { getHalBPassthroughCards, getHalBMove } from './services/hal_bAi';
+import { getGPT52Pass, getGPT52Move } from './services/GPT52';
 import PlayingCard from './components/PlayingCard';
 import TimeBar from './components/TimeBar';
 
@@ -20,7 +21,7 @@ const AI_NAMES = [
 
 const DEFAULT_CONFIG: GameConfig = {
   playerName: 'Charlie Bartom',
-  useGem: false, // DEFAULT: Hal_B (Offline)
+  aiType: 'HAL', // DEFAULT: Hal_B (Offline)
   maxRounds: 8,
   maxScore: 100,
   passSequenceName: 'DSC-'
@@ -119,9 +120,12 @@ const App: React.FC = () => {
             // Ritardo simulato per il passaggio
             await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
 
-            if (gameState.config.useGem) {
-               // GEM (Offline Advanced)
+            if (gameState.config.aiType === 'GEM') {
+               // GEM (Advanced)
                ids = getGemPass(bot.hand);
+            } else if (gameState.config.aiType === 'GPT52') {
+               // GPT52 (Pro)
+               ids = getGPT52Pass(bot.hand);
             } else {
                // Hal B (Standard)
                console.log(`%c[Hal B] Bot ${bot.name} calcola passaggio`, "color: orange; font-weight: bold;");
@@ -139,7 +143,7 @@ const App: React.FC = () => {
           processBots();
       }
     }
-  }, [gameState.gameStatus, gameState.passDirection, gameState.players, gameState.config.useGem]);
+  }, [gameState.gameStatus, gameState.passDirection, gameState.players, gameState.config.aiType]);
 
   // --- TIMER ---
   useEffect(() => {
@@ -181,9 +185,12 @@ const App: React.FC = () => {
         await new Promise(r => setTimeout(r, thinkingTime));
 
         try {
-            if (gameState.config.useGem) {
+            if (gameState.config.aiType === 'GEM') {
                 // GEM (Advanced Offline)
                 cardToPlay = getGemMove(gameState, currentPlayer.id);
+            } else if (gameState.config.aiType === 'GPT52') {
+                // GPT52 (Pro)
+                cardToPlay = getGPT52Move(gameState, currentPlayer.id);
             } else {
                 // Hal B (Standard Offline)
                 console.log(`%c[Hal B] Bot ${currentPlayer.name} calcola mossa`, "color: orange;");
@@ -200,7 +207,7 @@ const App: React.FC = () => {
 
       performBotMove();
     }
-  }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length, gameState.config.useGem]);
+  }, [gameState.turnIndex, gameState.gameStatus, gameState.currentTrick.length, gameState.config.aiType]);
 
   useEffect(() => {
     if (gameState.currentTrick.length === 4) { 
@@ -438,16 +445,22 @@ const App: React.FC = () => {
             <label className="block text-xs font-bold uppercase opacity-50 mb-2">Intelligenza Artificiale</label>
             <div className="flex gap-2">
               <button 
-                onClick={() => setTempConfig({...tempConfig, useGem: true})}
-                className={`flex-1 py-3 rounded-xl font-bold border transition-all ${tempConfig.useGem ? 'bg-emerald-400 text-black border-emerald-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+                onClick={() => setTempConfig({...tempConfig, aiType: 'GPT52'})}
+                className={`flex-1 py-3 rounded-xl font-bold border transition-all ${tempConfig.aiType === 'GPT52' ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
               >
-                GEM (Advanced)
+                GPT 52
               </button>
               <button 
-                onClick={() => setTempConfig({...tempConfig, useGem: false})}
-                className={`flex-1 py-3 rounded-xl font-bold border transition-all ${!tempConfig.useGem ? 'bg-orange-400 text-black border-orange-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+                onClick={() => setTempConfig({...tempConfig, aiType: 'GEM'})}
+                className={`flex-1 py-3 rounded-xl font-bold border transition-all ${tempConfig.aiType === 'GEM' ? 'bg-sky-400 text-black border-sky-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
               >
-                Halb AI (Std)
+                GEM (Adv)
+              </button>
+              <button 
+                onClick={() => setTempConfig({...tempConfig, aiType: 'HAL'})}
+                className={`flex-1 py-3 rounded-xl font-bold border transition-all ${tempConfig.aiType === 'HAL' ? 'bg-orange-400 text-black border-orange-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
+              >
+                Halb AI
               </button>
             </div>
           </div>

@@ -22,9 +22,11 @@ export interface Player {
   selectedToPass: string[]; // IDs delle carte selezionate per lo scambio
 }
 
+export type AiType = 'HAL' | 'GEM' | 'GPT52';
+
 export interface GameConfig {
   playerName: string;
-  useGem: boolean; // Rinominato da useGemini a useGem
+  aiType: AiType; // Sostituisce useGem
   maxRounds: number;
   maxScore: number; // 50 o 100
   passSequenceName: 'DSC-' | 'DS-C'; // DSC- (Standard) o DS-C (Variante)

@@ -60,7 +60,7 @@ const getPassScore = (card: Card): number => {
 };
 
 export function getGemPass(hand: Card[]): string[] {
-    console.log("%c[GEM] Calcolo carte da passare (Regole Infami/LowHearts)...", "color: #34d399; font-weight: bold;");
+    console.log("%c[GEM] Calcolo carte da passare (Regole Infami/LowHearts)...", "color: #38bdf8; font-weight: bold;");
     
     // Calcola score per ogni carta
     const scoredCards = hand.map(c => ({
@@ -107,7 +107,7 @@ export function getGemMove(gameState: GameState, botId: number): Card {
             // Cerca Assi di Fiori o Quadri
             const earlyAce = legalMoves.find(c => c.rank === 'A' && (c.suit === 'clubs' || c.suit === 'diamonds'));
             if (earlyAce) {
-                console.log(`%c[GEM] Regola 6: Lead aggressivo con Asso (${earlyAce.id})`, "color: #34d399;");
+                console.log(`%c[GEM] Regola 6: Lead aggressivo con Asso (${earlyAce.id})`, "color: #38bdf8;");
                 return earlyAce;
             }
             // Se non ho Asso, ma ho il K e l'Asso è già uscito (memoria semplice: controlliamo se abbiamo il K)

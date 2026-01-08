@@ -58,19 +58,30 @@ const App: React.FC = () => {
   // Inizializza i giocatori quando inizia il gioco vero e proprio
   const initializeGame = () => {
     const initialPlayers: Player[] = [
-      { id: 0, name: tempConfig.playerName || 'Giocatore', hand: [], isHuman: true, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
-      { id: 1, name: botNames[0], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
-      { id: 2, name: botNames[1], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
-      { id: 3, name: botNames[2], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [] },
+      { id: 0, name: tempConfig.playerName || 'Giocatore', hand: [], isHuman: true, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [], scoreHistory: [] },
+      { id: 1, name: botNames[0], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [], scoreHistory: [] },
+      { id: 2, name: botNames[1], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [], scoreHistory: [] },
+      { id: 3, name: botNames[2], hand: [], isHuman: false, score: 0, pointsThisRound: 0, tricksWon: 0, selectedToPass: [], scoreHistory: [] },
     ];
 
     setGameState(prev => ({
       ...prev,
       players: initialPlayers,
       config: tempConfig,
-      gameStatus: 'dealing'
+      gameStatus: 'dealing',
+      passDirection: 'right' // Round 1 è sempre right
     }));
   };
+
+  // Helper centralizzato per calcolare la direzione di passaggio
+  const calculatePassDirection = useCallback((round: number) => {
+    const seq = gameState.config.passSequenceName;
+    const cycle = (round - 1) % 4;
+    const map = seq === 'DSC-' 
+        ? ['right', 'left', 'across', 'none'] 
+        : ['right', 'left', 'none', 'across'];
+    return map[cycle] as PassDirection;
+  }, [gameState.config.passSequenceName]);
 
   // Calcolo dinamico del Mazziere e del Primo di Mano
   const dealerIndex = (gameState.roundNumber - 1 + dealerOffset) % 4;
@@ -261,9 +272,11 @@ const App: React.FC = () => {
               }));
             }
 
+            // Aggiorna score e cronologia
             const endRoundPlayers = processedPlayers.map(p => ({
               ...p, 
               score: p.score + p.pointsThisRound,
+              scoreHistory: [...p.scoreHistory, p.pointsThisRound],
               tricksWon: 0 
             }));
 
@@ -288,18 +301,8 @@ const App: React.FC = () => {
 
   const startNewRound = useCallback(() => {
     const deck = shuffle(createDeck());
-    const seqType = gameState.config.passSequenceName;
-    let dir: PassDirection = 'none';
-    const cycle = (gameState.roundNumber - 1) % 4;
+    const dir = calculatePassDirection(gameState.roundNumber);
     
-    if (seqType === 'DSC-') {
-      const map: PassDirection[] = ['right', 'left', 'across', 'none'];
-      dir = map[cycle];
-    } else {
-      const map: PassDirection[] = ['right', 'left', 'none', 'across'];
-      dir = map[cycle];
-    }
-
     const hands = [deck.slice(0,13), deck.slice(13,26), deck.slice(26,39), deck.slice(39,52)];
     const newPlayers = gameState.players.map((p, i) => ({
       ...p, hand: hands[i].sort((a,b) => a.suit === b.suit ? a.value - b.value : a.suit.localeCompare(b.suit)),
@@ -311,7 +314,7 @@ const App: React.FC = () => {
       currentTrick: [], turnIndex: startingPlayerIndex, heartsBroken: false, leadSuit: null, receivedCards: [],
       winningMessage: null
     }));
-  }, [gameState.roundNumber, gameState.players, startingPlayerIndex, gameState.config.passSequenceName]);
+  }, [gameState.roundNumber, gameState.players, startingPlayerIndex, calculatePassDirection]);
 
   const toggleSelectToPass = (cardId: string) => {
     setGameState(prev => {
@@ -358,6 +361,18 @@ const App: React.FC = () => {
     }
     return pts;
   }, [gameState.currentTrick]);
+
+  // Helper per ottenere la direzione passata in base all'indice del round (usato nella tabella)
+  const getRoundDirectionChar = (roundIndex: number) => {
+      const dir = calculatePassDirection(roundIndex + 1);
+      switch (dir) {
+          case 'left': return 'S';
+          case 'right': return 'D';
+          case 'across': return 'C';
+          case 'none': return '-';
+          default: return '-';
+      }
+  };
 
   // Helper UI
   const PlayerInfoWidget = ({ player, isBot, isCurrent, isLastWinner }: { player: Player, isBot: boolean, isCurrent: boolean, isLastWinner: boolean }) => (
@@ -421,6 +436,57 @@ const App: React.FC = () => {
     }
   };
 
+  // Componente ScoreTable riutilizzabile
+  const ScoreTable = () => (
+    <div className="overflow-hidden bg-black/65 border border-white/20 rounded-lg shadow-2xl">
+        <div className="w-full overflow-x-auto">
+            <table className="text-center border-collapse">
+                <thead>
+                    <tr className="bg-white/10 text-white font-bold text-base md:text-sm h-14">
+                        <th className="py-2 px-8 border-r border-white/10 w-12 text-white/50">#</th>
+                        {gameState.players.map(p => (
+                             <th key={p.id} className="p-2 border-r border-slate-700 w-[150px]">
+                                {p.name}
+                             </th>
+                        ))}
+                        <th className="py-2 px-8 w-12 text-yellow-400">R</th>
+                    </tr>
+                </thead>
+                <tbody className="text-base md:text-base font-medium">
+                    {/* Genera righe in base allo storico del primo giocatore */}
+                    {gameState.players[0].scoreHistory.map((_, roundIndex) => (
+                        <tr key={roundIndex} className="border-b border-white/10 hover:bg-white/5 transition-colors">
+                            <td className="p-2 border-r border-slate-700 text-white/50">{roundIndex + 1}</td>
+                            {gameState.players.map(p => {
+                                const score = p.scoreHistory[roundIndex];
+                                const colorClass = score > 0 ? 'text-emerald-400' : (score < 0 ? 'text-red-400' : 'text-white/30');
+                                const valStr = score > 0 ? `+${score}` : score;
+                                return (
+                                    <td key={p.id} className={`p-2 border-r border-white/10 ${colorClass}`}>
+                                        {valStr}
+                                    </td>
+                                );
+                            })}
+                            <td className="p-2 text-yellow-400 font-bold">{getRoundDirectionChar(roundIndex)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+                <tfoot className="bg-white/10 font-bold text-base md:text-lg border-t-2 border-white/20 h-14">
+                    <tr>
+                        <td className="p-3 border-r border-slate-700 text-white/50">TOT</td>
+                        {gameState.players.map(p => (
+                             <td key={p.id} className={`p-3 border-r border-white/10 ${p.score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {p.score}
+                             </td>
+                        ))}
+                        <td className="p-3 text-white/50">-</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+  );
+
   // --- RENDER ---
   
   // 1. Schermata SETUP
@@ -448,19 +514,19 @@ const App: React.FC = () => {
                 onClick={() => setTempConfig({...tempConfig, aiType: 'GPT52'})}
                 className={`flex-1 py-3 rounded-xl font-bold border transition-all ${tempConfig.aiType === 'GPT52' ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
               >
-                GPT 52
+                GPT 5.2
               </button>
               <button 
                 onClick={() => setTempConfig({...tempConfig, aiType: 'GEM'})}
                 className={`flex-1 py-3 rounded-xl font-bold border transition-all ${tempConfig.aiType === 'GEM' ? 'bg-sky-400 text-black border-sky-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
               >
-                GEM (Adv)
+                GEMINI
               </button>
               <button 
                 onClick={() => setTempConfig({...tempConfig, aiType: 'HAL'})}
                 className={`flex-1 py-3 rounded-xl font-bold border transition-all ${tempConfig.aiType === 'HAL' ? 'bg-orange-400 text-black border-orange-400' : 'bg-transparent border-white/20 text-white/50 hover:bg-white/5'}`}
               >
-                Halb AI
+                ASI:One
               </button>
             </div>
           </div>
@@ -707,37 +773,30 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* -------------------  POPUP PUNTEGGI (SCORING) ----------------------*/}
       {gameState.gameStatus === 'scoring' && (
         <div className="fixed inset-0 bg-black/98 z-[600] flex items-center justify-center">
-          <div className="w-full max-w-md bg-white/5 border border-white/10 p-8 rounded-3xl animate-deal transform -translate-y-12 backdrop-blur-xl">
+          <div className="w-full max-w-4xl bg-white/5 border border-white/10 p-6 md:p-10 rounded-3xl animate-deal backdrop-blur-xl flex flex-col items-center">
             {gameState.winningMessage && (
-              <div className="bg-yellow-400 text-black text-center py-2 rounded-xl font-black text-2xl mb-6 animate-pulse uppercase">
+              <div className="bg-yellow-400 text-black text-center py-2 px-6 rounded-xl font-black text-2xl mb-8 animate-pulse uppercase shadow-lg">
                 {gameState.winningMessage}
               </div>
             )}
-            <h2 className="text-4xl font-bold text-center mb-10 uppercase tracking-tighter">Punteggi</h2>
-            <div className="space-y-3 mb-8">
-              {[...gameState.players].sort((a,b) => b.score - a.score).map((p, i) => (
-                <div key={p.id} className={`flex justify-between items-center bg-white/5 py-1.5 px-5 rounded-xl border ${p.isHuman ? 'border-emerald-500' : 'border-white/5'}`}>
-                  <div className="flex items-center gap-4">
-                    <span className="text-2xl font-bold opacity-10">{i+1}</span>
-                    <span className="font-bold text-lg">{p.name}</span>
-                  </div>
-                  <div className="text-right flex items-center gap-3">
-                    <span className={`text-sm font-bold opacity-60 ${p.pointsThisRound >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {p.pointsThisRound > 0 ? `+${p.pointsThisRound}` : p.pointsThisRound}
-                    </span>
-                    <div className={`text-xl font-bold ${p.score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {p.score}
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <h2 className="text-4xl font-bold text-center mb-8 uppercase tracking-tighter text-white">Classifica</h2>
+            
+            <div className="mb-8 w-full">
+                <ScoreTable />
             </div>
-            <button onClick={() => setGameState(s => ({...s, roundNumber: s.roundNumber + 1, gameStatus: 'dealing'}))} className="w-full bg-emerald-500 py-5 rounded-full font-extrabold text-xl transition-all shadow-xl hover:bg-emerald-400">PROSSIMO ROUND</button>
+
+            <button onClick={() => {
+                const nextRound = gameState.roundNumber + 1;
+                const nextDir = calculatePassDirection(nextRound);
+                setGameState(s => ({...s, roundNumber: nextRound, passDirection: nextDir, gameStatus: 'dealing'}));
+            }} className="w-full max-w-sm bg-emerald-500 py-5 rounded-full font-extrabold text-xl transition-all shadow-xl hover:bg-emerald-400 active:scale-95">PROSSIMO ROUND</button>
           </div>
         </div>
       )}
+      {/* -------------------  SPLASH INIZIALE  ----------------------*/}
       {gameState.gameStatus === 'dealing' && gameState.players.length > 0 && (
         <div className="fixed bottom-[10%] bg-black/98 z-[700] flex items-center justify-center">
           <div className="text-center animate-deal">
@@ -748,21 +807,17 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* -------------------  GAME OVER ----------------------*/}
       {gameState.gameStatus === 'gameOver' && (
         <div className="fixed inset-0 bg-black z-[1000] flex flex-col items-center justify-center p-6">
-           <h1 className="text-6xl font-black text-yellow-400 mb-2 uppercase tracking-tighter">Fine Partita</h1>
-           <div className="w-full max-w-lg bg-white/5 rounded-3xl p-8 border border-white/10 mb-8">
-              {[...gameState.players].sort((a,b) => b.score - a.score).map((p, i) => (
-                <div key={p.id} className="flex justify-between items-center py-3 border-b border-white/5 last:border-0">
-                   <div className="flex items-center gap-4">
-                      <span className="text-3xl font-black opacity-20">{i+1}</span>
-                      <span className="text-2xl font-bold">{p.name}</span>
-                   </div>
-                   <span className={`text-3xl font-black ${p.score >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{p.score}</span>
-                </div>
-              ))}
+           <h1 className="text-6xl font-black text-yellow-400 mb-6 uppercase tracking-tighter">Fine Partita</h1>
+           
+           <div className="w-full max-w-4xl mb-10">
+              <ScoreTable />
            </div>
-           <button onClick={() => window.location.reload()} className="bg-white text-black px-12 py-5 rounded-full font-black text-2xl hover:scale-105 transition-transform">GIOCA ANCORA</button>
+
+           <button onClick={() => window.location.reload()} className="bg-white text-black px-12 py-5 rounded-full font-black text-2xl hover:scale-105 transition-transform shadow-2xl">GIOCA ANCORA</button>
         </div>
       )}
     </div>

@@ -20,6 +20,7 @@ export interface Player {
   pointsThisRound: number;
   tricksWon: number;
   selectedToPass: string[]; // IDs delle carte selezionate per lo scambio
+  scoreHistory: number[]; // Cronologia punti per mano
 }
 
 export type AiType = 'HAL' | 'GEM' | 'GPT52';
